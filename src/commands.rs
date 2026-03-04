@@ -15,17 +15,31 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         .fetch_optional(&ctx.data().db)
         .await?;
 
+    let mut embed = serenity::CreateEmbed::new()
+        .title("Voice Statistics")
+        .color(0x3498DB)
+        .thumbnail(ctx.author().face());
+
     match record {
         Some(row) => {
             let total_seconds: i64 = row.get("total_seconds");
             let hours = total_seconds / 3600;
             let minutes = (total_seconds % 3600) / 60;
-            ctx.say(format!("You have spent {}h {}m in voice channels.", hours, minutes)).await?;
+
+            embed = embed.field(
+                "Total Time", 
+                format!("**{}** hours and **{}** minutes", hours, minutes), 
+                false
+            );
         }
         None => {
-            ctx.say("You have no recorded time in this server.").await?;
+            embed = embed.description("You have no recorded voice time in this server.");
         }
     }
+
+    let reply = poise::CreateReply::default().embed(embed);
+    ctx.send(reply).await?;
+
     Ok(())
 }
 
@@ -49,15 +63,17 @@ pub async fn leaderboard(
         return Ok(());
     }
 
-    let mut response = format!("**Top {} Users:**\n", fetch_limit);
+    let mut description = String::new();
+
     for (index, row) in records.into_iter().enumerate() {
         let user_id: i64 = row.get("user_id");
         let total_seconds: i64 = row.get("total_seconds");
         
         let hours = total_seconds / 3600;
         let minutes = (total_seconds % 3600) / 60;
-        response.push_str(&format!(
-            "{}. <@{}>: {}h {}m\n",
+        
+        description.push_str(&format!(
+            "**{}.** <@{}> • {}h {}m\n",
             index + 1,
             user_id,
             hours,
@@ -65,7 +81,13 @@ pub async fn leaderboard(
         ));
     }
 
-    ctx.say(response).await?;
+    let embed = serenity::CreateEmbed::new()
+        .title(format!("Top {} Users in Voice Activity", fetch_limit))
+        .description(description)
+        .color(0xF1C40F); // Gold color
+
+    ctx.send(poise::CreateReply::default().embed(embed)).await?;
+
     Ok(())
 }
 
