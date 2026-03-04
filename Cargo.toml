@@ -1,0 +1,11 @@
+[package]
+name = "vc_stats_master"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+poise = "0.6"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+dotenvy = "0.15"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls"] }
+chrono = "0.4"
