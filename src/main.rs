@@ -26,6 +26,7 @@ async fn main() {
             user_id INTEGER NOT NULL,
             guild_id INTEGER NOT NULL,
             total_seconds INTEGER NOT NULL DEFAULT 0,
+            personal_record INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (user_id, guild_id)
         )"
     )

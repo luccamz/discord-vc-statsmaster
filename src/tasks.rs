@@ -51,7 +51,12 @@ async fn perform_guild_reset(
             let total_seconds: i64 = record.get("total_seconds");
             let hours = total_seconds / 3600;
             let minutes = (total_seconds % 3600) / 60;
-            message.push_str(&format!("{}. <@{}>: {}h {}m\n", index + 1, user_id, hours, minutes));
+            message.push_str(&format!("{}. <@{}>: {}h {}m", index + 1, user_id, hours, minutes));
+            if total_seconds > record.get("personal_record") {
+                message.push_str("- New personal record!\n");
+            } else {
+                message.push_str("\n");
+            }
         }
     }
 
@@ -59,10 +64,15 @@ async fn perform_guild_reset(
     let builder = serenity::CreateMessage::new().content(message);
     let _ = channel.send_message(http, builder).await;
 
-    sqlx::query("DELETE FROM voice_stats WHERE guild_id = ?")
-        .bind(guild_id)
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "UPDATE voice_stats
+        SET total_seconds = 0,
+        personal_record = MAX(personal_record, total_seconds)
+        WHERE guild_id = ?"
+    )
+    .bind(guild_id)
+    .execute(db)
+    .await?;
 
     Ok(())
 }

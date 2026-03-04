@@ -9,7 +9,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
     let guild_id = ctx.guild_id().unwrap().get() as i64;
 
-    let record = sqlx::query("SELECT total_seconds FROM voice_stats WHERE user_id = ? AND guild_id = ?")
+    let record = sqlx::query("SELECT total_seconds, personal_record FROM voice_stats WHERE user_id = ? AND guild_id = ?")
         .bind(user_id)
         .bind(guild_id)
         .fetch_optional(&ctx.data().db)
@@ -25,10 +25,16 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             let total_seconds: i64 = row.get("total_seconds");
             let hours = total_seconds / 3600;
             let minutes = (total_seconds % 3600) / 60;
+            let percent = 
+                if row.get::<i64, _>("personal_record") > 0 {
+                    Some((total_seconds as f64 / row.get::<i64, _>("personal_record") as f64) * 100.0)
+                } else {
+                    None
+                };
 
             embed = embed.field(
                 "Total Time", 
-                format!("**{}** hours and **{}** minutes", hours, minutes), 
+                format!("**{}** hours and **{}** minutes.. **{:.0}%** of your PR!", hours, minutes, percent.unwrap_or(9999999.0)),
                 false
             );
         }
@@ -102,18 +108,28 @@ pub async fn reset_stats(
     match user {
         Some(u) => {
             let user_id = u.id.get() as i64;
-            sqlx::query("DELETE FROM voice_stats WHERE user_id = ? AND guild_id = ?")
-                .bind(user_id)
-                .bind(guild_id)
-                .execute(&ctx.data().db)
-                .await?;
+            sqlx::query(
+                "UPDATE voice_stats 
+                SET total_seconds = 0,
+                    personal_record = MAX(personal_record, total_seconds)
+                WHERE user_id = ? AND guild_id = ?"
+            )
+            .bind(user_id)
+            .bind(guild_id)
+            .execute(&ctx.data().db)
+            .await?;
             ctx.say(format!("Reset voice statistics for <@{}>.", user_id)).await?;
         }
         None => {
-            sqlx::query("DELETE FROM voice_stats WHERE guild_id = ?")
-                .bind(guild_id)
-                .execute(&ctx.data().db)
-                .await?;
+            sqlx::query(
+                "UPDATE voice_stats 
+                SET total_seconds = 0,
+                    personal_record = MAX(personal_record, total_seconds)
+                WHERE guild_id = ?"
+            )
+            .bind(guild_id)
+            .execute(&ctx.data().db)
+            .await?;
             ctx.say("Reset all voice statistics for this server.").await?;
         }
     }
