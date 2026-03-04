@@ -17,7 +17,6 @@ async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
     let guild_id = ctx.guild_id().unwrap().get() as i64;
 
-    // Use runtime query and bind variables
     let record = sqlx::query("SELECT total_seconds FROM voice_stats WHERE user_id = ? AND guild_id = ?")
         .bind(user_id)
         .bind(guild_id)
@@ -26,14 +25,13 @@ async fn stats(ctx: Context<'_>) -> Result<(), Error> {
 
     match record {
         Some(row) => {
-            // Extract the data manually using the Row trait
             let total_seconds: i64 = row.get("total_seconds");
             let hours = total_seconds / 3600;
             let minutes = (total_seconds % 3600) / 60;
             ctx.say(format!("You have spent {}h {}m in voice channels.", hours, minutes)).await?;
         }
         None => {
-            ctx.say("You have no recorded voice time in this server.").await?;
+            ctx.say("You have no recorded time in this server.").await?;
         }
     }
     Ok(())
@@ -59,7 +57,7 @@ async fn leaderboard(
         return Ok(());
     }
 
-    let mut response = format!("**Top {} Users in Voice Activity:**\n", fetch_limit);
+    let mut response = format!("**Top {} Users:**\n", fetch_limit);
     for (index, row) in records.into_iter().enumerate() {
         let user_id: i64 = row.get("user_id");
         let total_seconds: i64 = row.get("total_seconds");
@@ -108,6 +106,36 @@ async fn reset_stats(
     Ok(())
 }
 
+#[poise::command(slash_command, guild_only, required_permissions = "ADMINISTRATOR")]
+async fn toggle_tracking(
+    ctx: Context<'_>,
+    #[description = "Voice channel to toggle tracking for"] channel: serenity::Channel,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let channel_id = channel.id().get() as i64;
+
+    let existing = sqlx::query("SELECT 1 FROM tracked_channels WHERE channel_id = ?")
+        .bind(channel_id)
+        .fetch_optional(&ctx.data().db)
+        .await?;
+
+    if existing.is_some() {
+        sqlx::query("DELETE FROM tracked_channels WHERE channel_id = ?")
+            .bind(channel_id)
+            .execute(&ctx.data().db)
+            .await?;
+        ctx.say(format!("Stopped tracking voice activity in <#{}>.", channel_id)).await?;
+    } else {
+        sqlx::query("INSERT INTO tracked_channels (channel_id, guild_id) VALUES (?, ?)")
+            .bind(channel_id)
+            .bind(guild_id)
+            .execute(&ctx.data().db)
+            .await?;
+        ctx.say(format!("Started tracking voice activity in <#{}>.", channel_id)).await?;
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -130,15 +158,36 @@ async fn main() {
     .await
     .expect("Failed to create table");
 
+    sqlx::query(
+    "CREATE TABLE IF NOT EXISTS tracked_channels (
+        channel_id INTEGER PRIMARY KEY,
+        guild_id INTEGER NOT NULL
+    )"
+    )
+    .execute(&db)
+    .await
+    .expect("Failed to create tracked_channels table");
+
     let active_sessions = Arc::new(Mutex::new(HashMap::new()));
     let intents = serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::GUILD_VOICE_STATES;
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![stats(), leaderboard(), reset_stats()],
+            commands: vec![stats(), leaderboard(), reset_stats(), toggle_tracking()],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
                     if let serenity::FullEvent::VoiceStateUpdate { old: _, new } = event {
+                        let channel_id = match new.channel_id {
+                            Some(id) => id.get() as i64,
+                            None => return Ok(()),
+                        };
+                        let existing = sqlx::query("SELECT 1 FROM tracked_channels WHERE channel_id = ?")
+                                .bind(channel_id)
+                                .fetch_optional(&data.db)
+                                .await?;
+                        if !existing.is_some() {
+                            return Ok(());
+                        }
                         let user_id = new.user_id.get();
                         let guild_id = match new.guild_id {
                             Some(id) => id.get(),
