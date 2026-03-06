@@ -8,8 +8,8 @@ use sqlx::sqlite::SqlitePoolOptions;
 use std::{collections::HashMap, env, sync::Arc};
 use tokio::sync::Mutex;
 
-use crate::state::Data;
 use crate::commands::*;
+use crate::state::Data;
 
 #[tokio::main]
 async fn main() {
@@ -28,7 +28,7 @@ async fn main() {
             total_seconds INTEGER NOT NULL DEFAULT 0,
             personal_record INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (user_id, guild_id)
-        )"
+        )",
     )
     .execute(&db)
     .await
@@ -42,35 +42,36 @@ async fn main() {
             reset_day INTEGER NOT NULL DEFAULT 0,
             reset_hour INTEGER NOT NULL DEFAULT 0,
             reset_minute INTEGER NOT NULL DEFAULT 0
-        )"
+        )",
     )
     .execute(&db)
     .await
     .expect("Failed to create guild_settings table");
 
     sqlx::query(
-    "CREATE TABLE IF NOT EXISTS tracked_channels (
+        "CREATE TABLE IF NOT EXISTS tracked_channels (
         channel_id INTEGER PRIMARY KEY,
         guild_id INTEGER NOT NULL
-    )"
+    )",
     )
     .execute(&db)
     .await
     .expect("Failed to create tracked_channels table");
 
     let active_sessions = Arc::new(Mutex::new(HashMap::new()));
-    let intents = serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::GUILD_VOICE_STATES;
+    let intents =
+        serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::GUILD_VOICE_STATES;
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
-                stats(), 
-                leaderboard(), 
-                reset_stats(), 
-                toggle_tracking(), 
-                config_schedule()
+                stats(),
+                leaderboard(),
+                reset_stats(),
+                toggle_tracking(),
+                config_schedule(),
             ],
-            event_handler: |ctx, event, _framework, data| {
+            event_handler: |_ctx, event, _framework, data| {
                 Box::pin(async move {
                     if let Err(e) = events::handle_event(event, data).await {
                         eprintln!("Error handling event: {:?}", e);
@@ -89,7 +90,10 @@ async fn main() {
                 tokio::spawn(async move {
                     tasks::weekly_reset_task(http_clone, db_clone).await;
                 });
-                Ok(Data { db, active_sessions })
+                Ok(Data {
+                    db,
+                    active_sessions,
+                })
             })
         })
         .build();

@@ -1,10 +1,7 @@
 use crate::state::{Data, Error};
 use poise::serenity_prelude as serenity;
 
-pub async fn handle_event(
-    event: &serenity::FullEvent,
-    data: &Data,
-) -> Result<(), Error> {
+pub async fn handle_event(event: &serenity::FullEvent, data: &Data) -> Result<(), Error> {
     if let serenity::FullEvent::VoiceStateUpdate { old: _, new } = event {
         let user_id = new.user_id.get();
         let guild_id = match new.guild_id {
@@ -27,23 +24,21 @@ pub async fn handle_event(
 
         if is_in_tracked_channel {
             sessions.entry((user_id, guild_id)).or_insert(now);
-        } else {
-            if let Some(start_time) = sessions.remove(&(user_id, guild_id)) {
-                let duration = now - start_time;
-                if duration > 0 {
-                    sqlx::query(
-                        "INSERT INTO voice_stats (user_id, guild_id, total_seconds) 
+        } else if let Some(start_time) = sessions.remove(&(user_id, guild_id)) {
+            let duration = now - start_time;
+            if duration > 0 {
+                sqlx::query(
+                    "INSERT INTO voice_stats (user_id, guild_id, total_seconds) 
                             VALUES (?, ?, ?) 
                             ON CONFLICT(user_id, guild_id) 
-                            DO UPDATE SET total_seconds = total_seconds + ?"
-                    )
-                    .bind(user_id as i64)
-                    .bind(guild_id as i64)
-                    .bind(duration)
-                    .bind(duration)
-                    .execute(&data.db)
-                    .await?;
-                }
+                            DO UPDATE SET total_seconds = total_seconds + ?",
+                )
+                .bind(user_id as i64)
+                .bind(guild_id as i64)
+                .bind(duration)
+                .bind(duration)
+                .execute(&data.db)
+                .await?;
             }
         }
     }

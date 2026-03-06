@@ -1,7 +1,7 @@
 use crate::state::{Context, Error};
+use crate::tasks::WeekdayChoice;
 use poise::serenity_prelude as serenity;
 use sqlx::Row;
-use crate::tasks::WeekdayChoice;
 
 /// Displays your total accumulated voice time in this server
 #[poise::command(slash_command, guild_only)]
@@ -9,11 +9,13 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
     let guild_id = ctx.guild_id().unwrap().get() as i64;
 
-    let record = sqlx::query("SELECT total_seconds, personal_record FROM voice_stats WHERE user_id = ? AND guild_id = ?")
-        .bind(user_id)
-        .bind(guild_id)
-        .fetch_optional(&ctx.data().db)
-        .await?;
+    let record = sqlx::query(
+        "SELECT total_seconds, personal_record FROM voice_stats WHERE user_id = ? AND guild_id = ?",
+    )
+    .bind(user_id)
+    .bind(guild_id)
+    .fetch_optional(&ctx.data().db)
+    .await?;
 
     let mut embed = serenity::CreateEmbed::new()
         .title("Voice Statistics")
@@ -25,17 +27,21 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             let total_seconds: i64 = row.get("total_seconds");
             let hours = total_seconds / 3600;
             let minutes = (total_seconds % 3600) / 60;
-            let percent = 
-                if row.get::<i64, _>("personal_record") > 0 {
-                    Some((total_seconds as f64 / row.get::<i64, _>("personal_record") as f64) * 100.0)
-                } else {
-                    None
-                };
+            let percent = if row.get::<i64, _>("personal_record") > 0 {
+                Some((total_seconds as f64 / row.get::<i64, _>("personal_record") as f64) * 100.0)
+            } else {
+                None
+            };
 
             embed = embed.field(
-                "Total Time", 
-                format!("**{}** hours and **{}** minutes.. **{:.0}%** of your PR!", hours, minutes, percent.unwrap_or(9999999.0)),
-                false
+                "Total Time",
+                format!(
+                    "**{}** hours and **{}** minutes.. **{:.0}%** of your PR!",
+                    hours,
+                    minutes,
+                    percent.unwrap_or(9999999.0)
+                ),
+                false,
             );
         }
         None => {
@@ -74,10 +80,10 @@ pub async fn leaderboard(
     for (index, row) in records.into_iter().enumerate() {
         let user_id: i64 = row.get("user_id");
         let total_seconds: i64 = row.get("total_seconds");
-        
+
         let hours = total_seconds / 3600;
         let minutes = (total_seconds % 3600) / 60;
-        
+
         description.push_str(&format!(
             "**{}.** <@{}> • {}h {}m\n",
             index + 1,
@@ -112,25 +118,27 @@ pub async fn reset_stats(
                 "UPDATE voice_stats 
                 SET total_seconds = 0,
                     personal_record = MAX(personal_record, total_seconds)
-                WHERE user_id = ? AND guild_id = ?"
+                WHERE user_id = ? AND guild_id = ?",
             )
             .bind(user_id)
             .bind(guild_id)
             .execute(&ctx.data().db)
             .await?;
-            ctx.say(format!("Reset voice statistics for <@{}>.", user_id)).await?;
+            ctx.say(format!("Reset voice statistics for <@{}>.", user_id))
+                .await?;
         }
         None => {
             sqlx::query(
                 "UPDATE voice_stats 
                 SET total_seconds = 0,
                     personal_record = MAX(personal_record, total_seconds)
-                WHERE guild_id = ?"
+                WHERE guild_id = ?",
             )
             .bind(guild_id)
             .execute(&ctx.data().db)
             .await?;
-            ctx.say("Reset all voice statistics for this server.").await?;
+            ctx.say("Reset all voice statistics for this server.")
+                .await?;
         }
     }
     Ok(())
@@ -155,14 +163,22 @@ pub async fn toggle_tracking(
             .bind(channel_id)
             .execute(&ctx.data().db)
             .await?;
-        ctx.say(format!("Stopped tracking voice activity in <#{}>.", channel_id)).await?;
+        ctx.say(format!(
+            "Stopped tracking voice activity in <#{}>.",
+            channel_id
+        ))
+        .await?;
     } else {
         sqlx::query("INSERT INTO tracked_channels (channel_id, guild_id) VALUES (?, ?)")
             .bind(channel_id)
             .bind(guild_id)
             .execute(&ctx.data().db)
             .await?;
-        ctx.say(format!("Started tracking voice activity in <#{}>.", channel_id)).await?;
+        ctx.say(format!(
+            "Started tracking voice activity in <#{}>.",
+            channel_id
+        ))
+        .await?;
     }
     Ok(())
 }
@@ -178,18 +194,20 @@ pub async fn config_schedule(
     #[description = "UTC Offset (e.g., -5 for EST, 2 for CEST)"] utc_offset: i64,
 ) -> Result<(), Error> {
     // Validate inputs
-    if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
-        ctx.say("Invalid time constraint. Hour must be 0-23 and minute 0-59.").await?;
+    if !(0..24).contains(&hour) || !(0..60).contains(&minute) {
+        ctx.say("Invalid time constraint. Hour must be 0-23 and minute 0-59.")
+            .await?;
         return Ok(());
     }
-    if utc_offset < -12 || utc_offset > 14 {
-        ctx.say("Invalid UTC offset. Must be between -12 and 14.").await?;
+    if !(-12..=14).contains(&utc_offset) {
+        ctx.say("Invalid UTC offset. Must be between -12 and 14.")
+            .await?;
         return Ok(());
     }
 
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let channel_id = channel.id().get() as i64;
-    
+
     // Calculate UTC time
     let mut utc_hour = hour - utc_offset;
     let mut utc_day = day.to_chrono_num() as i64;
@@ -198,7 +216,7 @@ pub async fn config_schedule(
     if utc_hour < 0 {
         utc_hour += 24;
         // rem_euclid handles negative number wrapping correctly in Rust
-        utc_day = (utc_day - 1).rem_euclid(7); 
+        utc_day = (utc_day - 1).rem_euclid(7);
     } else if utc_hour >= 24 {
         utc_hour -= 24;
         utc_day = (utc_day + 1).rem_euclid(7);
@@ -226,6 +244,6 @@ pub async fn config_schedule(
         "Schedule configured. Leaderboard will reset locally every {:?} at {:02}:{:02} (UTC Offset: {}).", 
         day, hour, minute, utc_offset
     )).await?;
-    
+
     Ok(())
 }
