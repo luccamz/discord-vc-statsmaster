@@ -1,7 +1,7 @@
 use crate::state::Error;
 use chrono::{Datelike, Timelike};
 use poise::serenity_prelude as serenity;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::time::Duration;
 
@@ -39,14 +39,18 @@ async fn perform_guild_reset(
 ) -> Result<(), Error> {
     let new_weeks = current_weeks + 1;
 
-    sqlx::query("UPDATE guild_settings SET weeks_tracked = ? WHERE guild_id = ?")
-        .bind(new_weeks)
-        .bind(guild_id)
-        .execute(db)
-        .await?;
+    sqlx::query!(
+        "UPDATE guild_settings SET weeks_tracked = ? WHERE guild_id = ?",
+        new_weeks,
+        guild_id
+    )
+    .execute(db)
+    .await?;
 
-    let records = sqlx::query("SELECT user_id, total_seconds FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT 5")
-        .bind(guild_id)
+    let records = sqlx::query!(
+        "SELECT user_id, total_seconds, personal_record FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT 5",
+        guild_id
+    )
         .fetch_all(db)
         .await?;
 
@@ -56,8 +60,8 @@ async fn perform_guild_reset(
         message.push_str("No voice activity recorded this week.");
     } else {
         for (index, record) in records.into_iter().enumerate() {
-            let user_id: i64 = record.get("user_id");
-            let total_seconds: i64 = record.get("total_seconds");
+            let user_id: i64 = record.user_id;
+            let total_seconds: i64 = record.total_seconds;
             let hours = total_seconds / 3600;
             let minutes = (total_seconds % 3600) / 60;
             message.push_str(&format!(
@@ -67,7 +71,7 @@ async fn perform_guild_reset(
                 hours,
                 minutes
             ));
-            if total_seconds > record.get("personal_record") {
+            if total_seconds > record.personal_record {
                 message.push_str("- New personal record!\n");
             } else {
                 message.push('\n');
@@ -79,13 +83,13 @@ async fn perform_guild_reset(
     let builder = serenity::CreateMessage::new().content(message);
     let _ = channel.send_message(http, builder).await;
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE voice_stats
         SET total_seconds = 0,
         personal_record = MAX(personal_record, total_seconds)
         WHERE guild_id = ?",
+        guild_id
     )
-    .bind(guild_id)
     .execute(db)
     .await?;
 
@@ -104,21 +108,21 @@ pub async fn weekly_reset_task(http: Arc<serenity::Http>, db: SqlitePool) {
         let current_minute = now.minute() as i64;
 
         // Query only the guilds scheduled for this exact minute
-        let pending_resets = sqlx::query(
+        let pending_resets = sqlx::query!(
             "SELECT guild_id, announcement_channel_id, weeks_tracked FROM guild_settings 
              WHERE reset_day = ? AND reset_hour = ? AND reset_minute = ?",
+            current_day,
+            current_hour,
+            current_minute
         )
-        .bind(current_day)
-        .bind(current_hour)
-        .bind(current_minute)
         .fetch_all(&db)
         .await;
 
         if let Ok(settings) = pending_resets {
             for row in settings {
-                let guild_id: i64 = row.get("guild_id");
-                let channel_id: i64 = row.get("announcement_channel_id");
-                let weeks_tracked: i64 = row.get("weeks_tracked");
+                let guild_id: i64 = row.guild_id;
+                let channel_id: i64 = row.announcement_channel_id;
+                let weeks_tracked: i64 = row.weeks_tracked;
 
                 if let Err(e) =
                     perform_guild_reset(&http, &db, guild_id, channel_id, weeks_tracked).await

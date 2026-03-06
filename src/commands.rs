@@ -1,7 +1,6 @@
 use crate::state::{Context, Error};
 use crate::tasks::WeekdayChoice;
 use poise::serenity_prelude as serenity;
-use sqlx::Row;
 
 /// Displays your total accumulated voice time in this server
 #[poise::command(slash_command, guild_only)]
@@ -9,11 +8,11 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
     let guild_id = ctx.guild_id().unwrap().get() as i64;
 
-    let record = sqlx::query(
+    let record = sqlx::query!(
         "SELECT total_seconds, personal_record FROM voice_stats WHERE user_id = ? AND guild_id = ?",
+        user_id,
+        guild_id
     )
-    .bind(user_id)
-    .bind(guild_id)
     .fetch_optional(&ctx.data().db)
     .await?;
 
@@ -24,11 +23,11 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
 
     match record {
         Some(row) => {
-            let total_seconds: i64 = row.get("total_seconds");
+            let total_seconds: i64 = row.total_seconds;
             let hours = total_seconds / 3600;
             let minutes = (total_seconds % 3600) / 60;
-            let percent = if row.get::<i64, _>("personal_record") > 0 {
-                Some((total_seconds as f64 / row.get::<i64, _>("personal_record") as f64) * 100.0)
+            let percent = if row.personal_record > 0 {
+                Some((total_seconds as f64 / row.personal_record as f64) * 100.0)
             } else {
                 None
             };
@@ -64,9 +63,11 @@ pub async fn leaderboard(
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let fetch_limit = limit.unwrap_or(5).clamp(1, 50);
 
-    let records = sqlx::query("SELECT user_id, total_seconds FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT ?")
-        .bind(guild_id)
-        .bind(fetch_limit)
+    let records = sqlx::query!(
+        "SELECT user_id, total_seconds FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT ?",
+        guild_id,
+        fetch_limit
+    )
         .fetch_all(&ctx.data().db)
         .await?;
 
@@ -78,8 +79,8 @@ pub async fn leaderboard(
     let mut description = String::new();
 
     for (index, row) in records.into_iter().enumerate() {
-        let user_id: i64 = row.get("user_id");
-        let total_seconds: i64 = row.get("total_seconds");
+        let user_id: i64 = row.user_id;
+        let total_seconds: i64 = row.total_seconds;
 
         let hours = total_seconds / 3600;
         let minutes = (total_seconds % 3600) / 60;
@@ -114,27 +115,27 @@ pub async fn reset_stats(
     match user {
         Some(u) => {
             let user_id = u.id.get() as i64;
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE voice_stats 
                 SET total_seconds = 0,
                     personal_record = MAX(personal_record, total_seconds)
                 WHERE user_id = ? AND guild_id = ?",
+                user_id,
+                guild_id
             )
-            .bind(user_id)
-            .bind(guild_id)
             .execute(&ctx.data().db)
             .await?;
             ctx.say(format!("Reset voice statistics for <@{}>.", user_id))
                 .await?;
         }
         None => {
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE voice_stats 
                 SET total_seconds = 0,
                     personal_record = MAX(personal_record, total_seconds)
                 WHERE guild_id = ?",
+                guild_id
             )
-            .bind(guild_id)
             .execute(&ctx.data().db)
             .await?;
             ctx.say("Reset all voice statistics for this server.")
@@ -153,27 +154,33 @@ pub async fn toggle_tracking(
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let channel_id = channel.id().get() as i64;
 
-    let existing = sqlx::query("SELECT 1 FROM tracked_channels WHERE channel_id = ?")
-        .bind(channel_id)
-        .fetch_optional(&ctx.data().db)
-        .await?;
+    let existing = sqlx::query!(
+        "SELECT channel_id FROM tracked_channels WHERE channel_id = ?",
+        channel_id
+    )
+    .fetch_optional(&ctx.data().db)
+    .await?;
 
     if existing.is_some() {
-        sqlx::query("DELETE FROM tracked_channels WHERE channel_id = ?")
-            .bind(channel_id)
-            .execute(&ctx.data().db)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM tracked_channels WHERE channel_id = ?",
+            channel_id
+        )
+        .execute(&ctx.data().db)
+        .await?;
         ctx.say(format!(
             "Stopped tracking voice activity in <#{}>.",
             channel_id
         ))
         .await?;
     } else {
-        sqlx::query("INSERT INTO tracked_channels (channel_id, guild_id) VALUES (?, ?)")
-            .bind(channel_id)
-            .bind(guild_id)
-            .execute(&ctx.data().db)
-            .await?;
+        sqlx::query!(
+            "INSERT INTO tracked_channels (channel_id, guild_id) VALUES (?, ?)",
+            channel_id,
+            guild_id
+        )
+        .execute(&ctx.data().db)
+        .await?;
         ctx.say(format!(
             "Started tracking voice activity in <#{}>.",
             channel_id
@@ -223,20 +230,20 @@ pub async fn config_schedule(
     }
 
     // Insert the calculated UTC schedule into the database
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO guild_settings (guild_id, announcement_channel_id, reset_day, reset_hour, reset_minute) 
          VALUES (?, ?, ?, ?, ?) 
          ON CONFLICT(guild_id) DO UPDATE SET 
          announcement_channel_id = excluded.announcement_channel_id,
          reset_day = excluded.reset_day,
          reset_hour = excluded.reset_hour,
-         reset_minute = excluded.reset_minute"
+         reset_minute = excluded.reset_minute",
+        guild_id,
+        channel_id,
+        utc_day,
+        utc_hour,
+        minute
     )
-    .bind(guild_id)
-    .bind(channel_id)
-    .bind(utc_day)
-    .bind(utc_hour)
-    .bind(minute)
     .execute(&ctx.data().db)
     .await?;
 
