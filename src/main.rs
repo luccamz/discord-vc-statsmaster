@@ -59,9 +59,16 @@ async fn main() {
 
                 let http_clone = ctx.http.clone();
                 let db_clone = db.clone();
+                let db_clone_2 = db.clone();
+
                 tokio::spawn(async move {
                     tasks::weekly_reset_task(http_clone, db_clone).await;
                 });
+
+                tokio::spawn(async move {
+                    tasks::deadline_check_task(db_clone_2).await;
+                });
+
                 Ok(Data {
                     db,
                     active_sessions,

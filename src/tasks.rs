@@ -136,3 +136,25 @@ pub async fn weekly_reset_task(http: Arc<serenity::Http>, db: SqlitePool) {
         }
     }
 }
+
+pub async fn deadline_check_task(db: SqlitePool) {
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
+
+    loop {
+        interval.tick().await;
+        let now = chrono::Utc::now().timestamp();
+
+        let _ = sqlx::query!(
+            "UPDATE user_tasks 
+             SET terminated_at = ?, 
+                 is_last_selected = 0 
+             WHERE completed_at IS NULL 
+               AND terminated_at IS NULL 
+               AND deadline <= ?",
+            now,
+            now
+        )
+        .execute(&db)
+        .await;
+    }
+}

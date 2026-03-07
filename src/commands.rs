@@ -1,6 +1,6 @@
 use crate::state::{Context, Error};
 use crate::tasks::WeekdayChoice;
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use chrono::{NaiveDateTime, TimeZone};
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
 
@@ -369,10 +369,19 @@ pub async fn build_todo_components(
     db: &SqlitePool,
     user_id: i64,
 ) -> Result<Vec<serenity::CreateActionRow>, Error> {
+    // Fetch terminated_at and order by active -> completed -> terminated
     let tasks = sqlx::query!(
-        "SELECT task_id, description, completed_at, time_spent_seconds, deadline FROM user_tasks 
+        "SELECT task_id, description, completed_at, terminated_at, time_spent_seconds, deadline 
+         FROM user_tasks 
          WHERE user_id = ? 
-         ORDER BY completed_at ASC, deadline ASC, task_id DESC 
+         ORDER BY 
+            CASE 
+                WHEN completed_at IS NULL AND terminated_at IS NULL THEN 0 
+                WHEN completed_at IS NOT NULL THEN 1 
+                ELSE 2 
+            END ASC,
+            deadline ASC, 
+            task_id DESC 
          LIMIT 25",
         user_id
     )
@@ -389,18 +398,23 @@ pub async fn build_todo_components(
 
             let deadline_str = match task.deadline {
                 Some(ts) => {
-                    let dt = Utc.timestamp_opt(ts, 0).unwrap();
+                    let dt = chrono::Utc.timestamp_opt(ts, 0).unwrap();
                     format!(" [due: {}]", dt.format("%m/%d"))
                 }
                 None => String::new(),
             };
 
-            let prefix = if task.completed_at.is_some() {
+            let prefix = if task.terminated_at.is_some() {
+                "[-]"
+            } else if task.completed_at.is_some() {
                 "[x]"
             } else {
                 "[ ]"
             };
-            let style = if task.completed_at.is_some() {
+
+            let style = if task.terminated_at.is_some() {
+                serenity::ButtonStyle::Danger
+            } else if task.completed_at.is_some() {
                 serenity::ButtonStyle::Success
             } else {
                 serenity::ButtonStyle::Secondary
@@ -415,15 +429,20 @@ pub async fn build_todo_components(
 
             let label = format!("{} {}{}{}", prefix, safe_desc, deadline_str, time_str);
 
-            buttons.push(
-                serenity::CreateButton::new(format!(
-                    "task_toggle_{}_{}",
-                    task.task_id.unwrap(),
-                    user_id
-                ))
-                .label(label)
-                .style(style),
-            );
+            let mut button = serenity::CreateButton::new(format!(
+                "task_toggle_{}_{}",
+                task.task_id.unwrap(),
+                user_id
+            ))
+            .label(label)
+            .style(style);
+
+            // Disable interaction if the task is strictly terminated
+            if task.terminated_at.is_some() {
+                button = button.disabled(true);
+            }
+
+            buttons.push(button);
         }
         rows.push(serenity::CreateActionRow::Buttons(buttons));
     }

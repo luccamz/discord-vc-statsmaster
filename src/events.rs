@@ -37,7 +37,11 @@ pub async fn handle_event(
                 if let Entry::Vacant(e) = sessions.entry((user_id as u64, guild_id as u64)) {
                     // Fetch pending tasks and find the last selected task
                     let pending_tasks = sqlx::query!(
-                        "SELECT task_id, description, is_last_selected FROM user_tasks WHERE user_id = ? AND completed_at IS NULL",
+                        "SELECT task_id, description, is_last_selected 
+                         FROM user_tasks 
+                         WHERE user_id = ? 
+                           AND completed_at IS NULL 
+                           AND terminated_at IS NULL",
                         user_id
                     )
                     .fetch_all(&data.db)
@@ -227,7 +231,11 @@ pub async fn handle_event(
 
                 // Re-fetch pending tasks to build the updated dropdown
                 let pending_tasks = sqlx::query!(
-                    "SELECT task_id, description FROM user_tasks WHERE user_id = ? AND completed_at IS NULL",
+                    "SELECT task_id, description 
+                     FROM user_tasks 
+                     WHERE user_id = ? 
+                       AND completed_at IS NULL 
+                       AND terminated_at IS NULL",
                     user_id
                 )
                 .fetch_all(&data.db)
