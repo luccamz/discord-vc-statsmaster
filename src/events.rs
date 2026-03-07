@@ -11,10 +11,10 @@ pub async fn handle_event(
     match event {
         serenity::FullEvent::VoiceStateUpdate { old: _, new } => {
             let user_id = new.user_id.get() as i64;
-            let guild_id = match new.guild_id {
-                Some(id) => id.get(),
-                None => return Ok(()),
-            } as i64;
+            let Some(guild_id_nonzero) = new.guild_id else {
+                return Ok(());
+            };
+            let guild_id = guild_id_nonzero.get() as i64;
 
             let mut sessions = data.active_sessions.lock().await;
             let now = chrono::Utc::now().timestamp();
@@ -35,36 +35,53 @@ pub async fn handle_event(
 
             if is_in_tracked_channel {
                 if let Entry::Vacant(e) = sessions.entry((user_id as u64, guild_id as u64)) {
-                    e.insert(SessionData {
-                        start_time: now,
-                        active_task_id: None,
-                    });
-
-                    drop(sessions);
-
+                    // Fetch pending tasks and find the last selected task
                     let pending_tasks = sqlx::query!(
-                        "SELECT task_id, description FROM user_tasks WHERE user_id = ? AND completed_at IS NULL",
+                        "SELECT task_id, description, is_last_selected FROM user_tasks WHERE user_id = ? AND completed_at IS NULL",
                         user_id
                     )
                     .fetch_all(&data.db)
                     .await?;
 
+                    let mut initial_task_id = None;
+                    let mut active_task_name = "Nothing in particular".to_string();
+
+                    for task in &pending_tasks {
+                        if task.is_last_selected {
+                            initial_task_id = Some(task.task_id.unwrap());
+                            active_task_name = task.description.clone();
+                        }
+                    }
+
+                    e.insert(SessionData {
+                        start_time: now,
+                        active_task_id: initial_task_id,
+                    });
+
+                    drop(sessions);
+
                     let prompt_content = format!(
-                        "<@{}> Currently working on.. Nothing in particular. Change status?",
-                        user_id
+                        "<@{}> Currently working on.. {}. Change status?",
+                        user_id, active_task_name
                     );
 
                     let mut options = Vec::new();
-                    let no_task_opt =
-                        serenity::CreateSelectMenuOption::new("Nothing in particular", "none")
-                            .default_selection(true);
+                    let mut no_task_opt =
+                        serenity::CreateSelectMenuOption::new("Nothing in particular", "none");
+
+                    if initial_task_id.is_none() {
+                        no_task_opt = no_task_opt.default_selection(true);
+                    }
                     options.push(no_task_opt);
 
                     for task in pending_tasks {
-                        let opt = serenity::CreateSelectMenuOption::new(
+                        let mut opt = serenity::CreateSelectMenuOption::new(
                             &task.description,
-                            task.task_id.unwrap().to_string(), // Unwrapped Option
+                            task.task_id.unwrap().to_string(),
                         );
+                        if task.is_last_selected {
+                            opt = opt.default_selection(true);
+                        }
                         options.push(opt);
                     }
 
@@ -78,7 +95,7 @@ pub async fn handle_event(
                     let channel = serenity::ChannelId::new(current_channel_id as u64);
                     let _ = channel
                         .send_message(
-                            ctx, // Replaced &new.user_id with ctx
+                            ctx,
                             serenity::CreateMessage::new()
                                 .content(prompt_content)
                                 .select_menu(menu),
@@ -90,9 +107,8 @@ pub async fn handle_event(
                 if duration > 0 {
                     sqlx::query!(
                         "INSERT INTO voice_stats (user_id, guild_id, total_seconds) 
-                                VALUES (?, ?, ?) 
-                                ON CONFLICT(user_id, guild_id) 
-                                DO UPDATE SET total_seconds = total_seconds + ?",
+                         VALUES (?, ?, ?) ON CONFLICT(user_id, guild_id) 
+                         DO UPDATE SET total_seconds = total_seconds + ?",
                         user_id,
                         guild_id,
                         duration,
@@ -121,10 +137,10 @@ pub async fn handle_event(
             interaction: serenity::Interaction::Component(component),
         } => {
             let user_id = component.user.id.get() as i64;
-            let guild_id = match component.guild_id {
-                Some(id) => id.get() as i64,
-                None => return Ok(()),
+            let Some(guild_id_nonzero) = component.guild_id else {
+                return Ok(());
             };
+            let guild_id = guild_id_nonzero.get() as i64;
 
             if component.data.custom_id.starts_with("task_select_") {
                 let extracted_id = component.data.custom_id.replace("task_select_", "");
@@ -132,28 +148,95 @@ pub async fn handle_event(
                     return Ok(());
                 }
 
-                let selected_value = match component.data.kind {
-                    serenity::ComponentInteractionDataKind::StringSelect { ref values } => {
-                        &values[0]
-                    }
-                    _ => return Ok(()),
+                let serenity::ComponentInteractionDataKind::StringSelect { ref values } =
+                    component.data.kind
+                else {
+                    return Ok(());
                 };
+                let selected_value = &values[0];
 
+                let now = chrono::Utc::now().timestamp();
                 let mut sessions = data.active_sessions.lock().await;
+
+                // 1. Split the time: Commit the duration of the PREVIOUS task to the database
                 if let Some(session) = sessions.get_mut(&(user_id as u64, guild_id as u64)) {
+                    let duration = now - session.start_time;
+
+                    if duration > 0 {
+                        sqlx::query!(
+                            "INSERT INTO voice_stats (user_id, guild_id, total_seconds) 
+                             VALUES (?, ?, ?) ON CONFLICT(user_id, guild_id) 
+                             DO UPDATE SET total_seconds = total_seconds + ?",
+                            user_id,
+                            guild_id,
+                            duration,
+                            duration
+                        )
+                        .execute(&data.db)
+                        .await?;
+
+                        if let Some(old_task_id) = session.active_task_id {
+                            sqlx::query!(
+                                "UPDATE user_tasks 
+                                 SET time_spent_seconds = time_spent_seconds + ?,
+                                     record_session_seconds = MAX(record_session_seconds, ?)
+                                 WHERE task_id = ?",
+                                duration,
+                                duration,
+                                old_task_id
+                            )
+                            .execute(&data.db)
+                            .await?;
+                        }
+                    }
+
+                    // 2. Register the newly selected task and reset the start_time
+                    session.start_time = now;
                     if selected_value == "none" {
                         session.active_task_id = None;
                     } else {
                         session.active_task_id = Some(selected_value.parse().unwrap());
                     }
                 }
+                drop(sessions);
 
+                // 3. Update the persistent default for future sessions
+                sqlx::query!(
+                    "UPDATE user_tasks SET is_last_selected = 0 WHERE user_id = ?",
+                    user_id
+                )
+                .execute(&data.db)
+                .await?;
+
+                let selected_desc = if selected_value != "none" {
+                    let task_id: i64 = selected_value.parse().unwrap();
+                    sqlx::query!(
+                        "UPDATE user_tasks SET is_last_selected = 1 WHERE task_id = ?",
+                        task_id
+                    )
+                    .execute(&data.db)
+                    .await?;
+
+                    let row = sqlx::query!(
+                        "SELECT description FROM user_tasks WHERE task_id = ?",
+                        task_id
+                    )
+                    .fetch_one(&data.db)
+                    .await?;
+                    row.description
+                } else {
+                    "Nothing in particular".to_string()
+                };
+
+                // 4. Update the UI prompt to reflect the change
                 component
                     .create_response(
-                        ctx, // Replaced &component.user with ctx
+                        ctx,
                         serenity::CreateInteractionResponse::UpdateMessage(
-                            serenity::CreateInteractionResponseMessage::new()
-                                .content("Active task updated."),
+                            serenity::CreateInteractionResponseMessage::new().content(format!(
+                                "<@{}> Currently working on.. {}. Change status?",
+                                user_id, selected_desc
+                            )),
                         ),
                     )
                     .await?;
@@ -171,22 +254,22 @@ pub async fn handle_event(
 
                     sqlx::query!(
                         "UPDATE user_tasks 
-                             SET completed_at = CASE WHEN completed_at IS NULL THEN ? ELSE NULL END
-                             WHERE task_id = ?",
-                        now,
-                        task_id
+                         SET completed_at = CASE WHEN completed_at IS NULL THEN ? ELSE NULL END,
+                             is_last_selected = CASE WHEN completed_at IS NULL THEN 0 ELSE is_last_selected END
+                         WHERE task_id = ?",
+                        now, task_id
                     )
                     .execute(&data.db)
                     .await?;
 
                     sqlx::query!(
                         "DELETE FROM user_tasks 
+                         WHERE user_id = ? AND completed_at IS NOT NULL 
+                         AND task_id NOT IN (
+                             SELECT task_id FROM user_tasks 
                              WHERE user_id = ? AND completed_at IS NOT NULL 
-                             AND task_id NOT IN (
-                                 SELECT task_id FROM user_tasks 
-                                 WHERE user_id = ? AND completed_at IS NOT NULL 
-                                 ORDER BY completed_at DESC LIMIT 20
-                             )",
+                             ORDER BY completed_at DESC LIMIT 20
+                         )",
                         user_id,
                         user_id
                     )
@@ -197,7 +280,7 @@ pub async fn handle_event(
 
                     component
                         .create_response(
-                            ctx, // Replaced &component.user with ctx
+                            ctx,
                             serenity::CreateInteractionResponse::UpdateMessage(
                                 serenity::CreateInteractionResponseMessage::new()
                                     .components(new_components),
@@ -211,21 +294,20 @@ pub async fn handle_event(
                     return Ok(());
                 }
 
-                let selected_value = match component.data.kind {
-                    serenity::ComponentInteractionDataKind::StringSelect { ref values } => {
-                        &values[0]
-                    }
-                    _ => return Ok(()),
+                let serenity::ComponentInteractionDataKind::StringSelect { ref values } =
+                    component.data.kind
+                else {
+                    return Ok(());
                 };
+                let task_id: i64 = values[0].parse().unwrap();
 
-                let task_id: i64 = selected_value.parse().unwrap();
                 sqlx::query!("DELETE FROM user_tasks WHERE task_id = ?", task_id)
                     .execute(&data.db)
                     .await?;
 
                 component
                     .create_response(
-                        ctx, // Replaced &component.user with ctx
+                        ctx,
                         serenity::CreateInteractionResponse::UpdateMessage(
                             serenity::CreateInteractionResponseMessage::new()
                                 .content("Task deleted successfully.")

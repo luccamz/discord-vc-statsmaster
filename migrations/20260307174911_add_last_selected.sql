@@ -1,0 +1,1 @@
+ALTER TABLE user_tasks ADD COLUMN is_last_selected BOOLEAN NOT NULL DEFAULT 0;
