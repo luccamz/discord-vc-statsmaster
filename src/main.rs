@@ -42,6 +42,7 @@ async fn main() {
                 add_task(),
                 todo(),
                 delete_task(),
+                config_timezone(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {

@@ -1,6 +1,6 @@
 use crate::state::{Context, Error};
 use crate::tasks::WeekdayChoice;
-use chrono::{NaiveDateTime, TimeZone};
+use chrono::TimeZone;
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
 
@@ -252,6 +252,39 @@ pub async fn config_schedule(
     Ok(())
 }
 
+/// Configures your personal timezone offset for deadlines.
+#[poise::command(slash_command, guild_only)]
+pub async fn config_timezone(
+    ctx: Context<'_>,
+    #[description = "UTC Offset (e.g., -5 for EST, 2 for CEST)"] offset: i64,
+) -> Result<(), Error> {
+    if !(-12..=14).contains(&offset) {
+        ctx.say("Invalid UTC offset. Must be between -12 and 14.")
+            .await?;
+        return Ok(());
+    }
+
+    let user_id = ctx.author().id.get() as i64;
+
+    sqlx::query!(
+        "INSERT INTO user_settings (user_id, timezone_offset) VALUES (?, ?) 
+         ON CONFLICT(user_id) DO UPDATE SET timezone_offset = excluded.timezone_offset",
+        user_id,
+        offset
+    )
+    .execute(&ctx.data().db)
+    .await?;
+
+    let sign = if offset >= 0 { "+" } else { "" };
+    ctx.say(format!(
+        "Your personal timezone offset has been set to UTC{}{}.",
+        sign, offset
+    ))
+    .await?;
+
+    Ok(())
+}
+
 /// Adds a new task to your personal todo list.
 #[poise::command(slash_command, guild_only)]
 pub async fn add_task(
@@ -263,8 +296,21 @@ pub async fn add_task(
 
     let mut deadline_ts = None;
     if let Some(dl_str) = deadline {
-        match NaiveDateTime::parse_from_str(&dl_str, "%Y-%m-%d %H:%M") {
-            Ok(dt) => deadline_ts = Some(dt.and_utc().timestamp()),
+        // Fetch the user's configured offset, defaulting to 0 (UTC) if not set
+        let setting = sqlx::query!(
+            "SELECT timezone_offset FROM user_settings WHERE user_id = ?",
+            user_id
+        )
+        .fetch_optional(&ctx.data().db)
+        .await?;
+
+        let offset = setting.map(|s| s.timezone_offset).unwrap_or(0);
+
+        match chrono::NaiveDateTime::parse_from_str(&dl_str, "%Y-%m-%d %H:%M") {
+            Ok(dt) => {
+                let utc_dt = dt - chrono::Duration::hours(offset);
+                deadline_ts = Some(utc_dt.and_utc().timestamp());
+            }
             Err(_) => {
                 ctx.say(
                     "Invalid deadline format. Use `YYYY-MM-DD HH:MM` (e.g., `2026-12-31 23:59`).",
