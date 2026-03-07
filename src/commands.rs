@@ -1,6 +1,7 @@
 use crate::state::{Context, Error};
 use crate::tasks::WeekdayChoice;
 use poise::serenity_prelude as serenity;
+use sqlx::SqlitePool;
 
 /// Displays your total accumulated voice time in this server
 #[poise::command(slash_command, guild_only)]
@@ -97,7 +98,7 @@ pub async fn leaderboard(
     let embed = serenity::CreateEmbed::new()
         .title(format!("Top {} Users in Voice Activity", fetch_limit))
         .description(description)
-        .color(0xF1C40F); // Gold color
+        .color(0xF1C40F);
 
     ctx.send(poise::CreateReply::default().embed(embed)).await?;
 
@@ -200,7 +201,6 @@ pub async fn config_schedule(
     #[description = "Minute (0-59)"] minute: i64,
     #[description = "UTC Offset (e.g., -5 for EST, 2 for CEST)"] utc_offset: i64,
 ) -> Result<(), Error> {
-    // Validate inputs
     if !(0..24).contains(&hour) || !(0..60).contains(&minute) {
         ctx.say("Invalid time constraint. Hour must be 0-23 and minute 0-59.")
             .await?;
@@ -215,21 +215,17 @@ pub async fn config_schedule(
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let channel_id = channel.id().get() as i64;
 
-    // Calculate UTC time
     let mut utc_hour = hour - utc_offset;
     let mut utc_day = day.to_chrono_num() as i64;
 
-    // Handle day wrapping if the timezone offset pushes the hour past midnight
     if utc_hour < 0 {
         utc_hour += 24;
-        // rem_euclid handles negative number wrapping correctly in Rust
         utc_day = (utc_day - 1).rem_euclid(7);
     } else if utc_hour >= 24 {
         utc_hour -= 24;
         utc_day = (utc_day + 1).rem_euclid(7);
     }
 
-    // Insert the calculated UTC schedule into the database
     sqlx::query!(
         "INSERT INTO guild_settings (guild_id, announcement_channel_id, reset_day, reset_hour, reset_minute) 
          VALUES (?, ?, ?, ?, ?) 
@@ -253,4 +249,145 @@ pub async fn config_schedule(
     )).await?;
 
     Ok(())
+}
+
+/// Adds a new task to your personal todo list.
+#[poise::command(slash_command, guild_only)]
+pub async fn add_task(
+    ctx: Context<'_>,
+    #[description = "Task description"] description: String,
+) -> Result<(), Error> {
+    let user_id = ctx.author().id.get() as i64;
+
+    sqlx::query!(
+        "INSERT INTO user_tasks (user_id, description) VALUES (?, ?)",
+        user_id,
+        description
+    )
+    .execute(&ctx.data().db)
+    .await?;
+
+    ctx.say(format!("Added task: **{}**", description)).await?;
+    Ok(())
+}
+
+/// Views and manages your interactive todo list.
+#[poise::command(slash_command, guild_only)]
+pub async fn todo(ctx: Context<'_>) -> Result<(), Error> {
+    let user_id = ctx.author().id.get() as i64;
+    let components = build_todo_components(&ctx.data().db, user_id).await?;
+
+    if components.is_empty() {
+        ctx.say("Your todo list is empty. Use `/add_task` to create one.")
+            .await?;
+        return Ok(());
+    }
+
+    let reply = poise::CreateReply::default()
+        .content(
+            "Here is your interactive todo list. Click a task to toggle its completion status.",
+        )
+        .components(components);
+
+    ctx.send(reply).await?;
+    Ok(())
+}
+
+/// Deletes a task from your list.
+#[poise::command(slash_command, guild_only)]
+pub async fn delete_task(ctx: Context<'_>) -> Result<(), Error> {
+    let user_id = ctx.author().id.get() as i64;
+
+    let tasks = sqlx::query!(
+        "SELECT task_id, description FROM user_tasks WHERE user_id = ? AND completed_at IS NULL",
+        user_id
+    )
+    .fetch_all(&ctx.data().db)
+    .await?;
+
+    if tasks.is_empty() {
+        ctx.say("You have no active tasks to delete.").await?;
+        return Ok(());
+    }
+
+    let mut options = Vec::new();
+    for task in tasks {
+        let label = if task.description.len() > 80 {
+            format!("{}...", &task.description[..77])
+        } else {
+            task.description.clone()
+        };
+        // Added .unwrap() to task_id
+        options.push(serenity::CreateSelectMenuOption::new(
+            label,
+            task.task_id.unwrap().to_string(),
+        ));
+    }
+
+    options.truncate(25);
+
+    let menu = serenity::CreateSelectMenu::new(
+        format!("task_delete_{}", user_id),
+        serenity::CreateSelectMenuKind::String { options },
+    );
+
+    let reply = poise::CreateReply::default()
+        .content("Select a task to permanently delete:")
+        .components(vec![serenity::CreateActionRow::SelectMenu(menu)]);
+
+    ctx.send(reply).await?;
+    Ok(())
+}
+
+pub async fn build_todo_components(
+    db: &SqlitePool,
+    user_id: i64,
+) -> Result<Vec<serenity::CreateActionRow>, Error> {
+    let tasks = sqlx::query!(
+        "SELECT task_id, description, completed_at FROM user_tasks 
+         WHERE user_id = ? 
+         ORDER BY completed_at ASC, task_id DESC 
+         LIMIT 25",
+        user_id
+    )
+    .fetch_all(db)
+    .await?;
+
+    let mut rows = Vec::new();
+    for chunk in tasks.chunks(5) {
+        let mut buttons = Vec::new();
+        for task in chunk {
+            let label = if task.completed_at.is_some() {
+                format!("[x] {}", task.description)
+            } else {
+                format!("[ ] {}", task.description)
+            };
+
+            let style = if task.completed_at.is_some() {
+                serenity::ButtonStyle::Success
+            } else {
+                serenity::ButtonStyle::Secondary
+            };
+
+            let safe_label = if label.len() > 80 {
+                format!("{}...", &label[..77])
+            } else {
+                label
+            };
+
+            // Added .unwrap() to task_id
+            buttons.push(
+                serenity::CreateButton::new(format!(
+                    "task_toggle_{}_{}",
+                    task.task_id.unwrap(),
+                    user_id
+                ))
+                .label(safe_label)
+                .style(style),
+            );
+        }
+        rows.push(serenity::CreateActionRow::Buttons(buttons));
+    }
+
+    Ok(rows)
 }

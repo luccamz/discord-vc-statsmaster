@@ -9,7 +9,7 @@ use std::{collections::HashMap, env, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::commands::*;
-use crate::state::Data;
+use crate::state::{Data, SessionData};
 
 #[tokio::main]
 async fn main() {
@@ -26,7 +26,8 @@ async fn main() {
         .await
         .expect("Failed to run database migrations");
 
-    let active_sessions = Arc::new(Mutex::new(HashMap::new()));
+    let active_sessions: Arc<Mutex<HashMap<(u64, u64), SessionData>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     let intents =
         serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::GUILD_VOICE_STATES;
 
@@ -38,10 +39,13 @@ async fn main() {
                 reset_stats(),
                 toggle_tracking(),
                 config_schedule(),
+                add_task(),
+                todo(),
+                delete_task(),
             ],
-            event_handler: |_ctx, event, _framework, data| {
+            event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
-                    if let Err(e) = events::handle_event(event, data).await {
+                    if let Err(e) = events::handle_event(ctx, event, data).await {
                         eprintln!("Error handling event: {:?}", e);
                     }
                     Ok(())
