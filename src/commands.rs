@@ -1,5 +1,6 @@
 use crate::state::{Context, Error};
 use crate::tasks::WeekdayChoice;
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
 
@@ -256,13 +257,29 @@ pub async fn config_schedule(
 pub async fn add_task(
     ctx: Context<'_>,
     #[description = "Task description"] description: String,
+    #[description = "Optional deadline (YYYY-MM-DD HH:MM)"] deadline: Option<String>,
 ) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
 
+    let mut deadline_ts = None;
+    if let Some(dl_str) = deadline {
+        match NaiveDateTime::parse_from_str(&dl_str, "%Y-%m-%d %H:%M") {
+            Ok(dt) => deadline_ts = Some(dt.and_utc().timestamp()),
+            Err(_) => {
+                ctx.say(
+                    "Invalid deadline format. Use `YYYY-MM-DD HH:MM` (e.g., `2026-12-31 23:59`).",
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+    }
+
     sqlx::query!(
-        "INSERT INTO user_tasks (user_id, description) VALUES (?, ?)",
+        "INSERT INTO user_tasks (user_id, description, deadline) VALUES (?, ?, ?)",
         user_id,
-        description
+        description,
+        deadline_ts
     )
     .execute(&ctx.data().db)
     .await?;
@@ -353,9 +370,9 @@ pub async fn build_todo_components(
     user_id: i64,
 ) -> Result<Vec<serenity::CreateActionRow>, Error> {
     let tasks = sqlx::query!(
-        "SELECT task_id, description, completed_at, time_spent_seconds FROM user_tasks 
+        "SELECT task_id, description, completed_at, time_spent_seconds, deadline FROM user_tasks 
          WHERE user_id = ? 
-         ORDER BY completed_at ASC, task_id DESC 
+         ORDER BY completed_at ASC, deadline ASC, task_id DESC 
          LIMIT 25",
         user_id
     )
@@ -370,6 +387,14 @@ pub async fn build_todo_components(
             let minutes = (task.time_spent_seconds % 3600) / 60;
             let time_str = format!("({}h {}m)", hours, minutes);
 
+            let deadline_str = match task.deadline {
+                Some(ts) => {
+                    let dt = Utc.timestamp_opt(ts, 0).unwrap();
+                    format!(" [due: {}]", dt.format("%m/%d"))
+                }
+                None => String::new(),
+            };
+
             let prefix = if task.completed_at.is_some() {
                 "[x]"
             } else {
@@ -381,15 +406,14 @@ pub async fn build_todo_components(
                 serenity::ButtonStyle::Secondary
             };
 
-            // Calculate remaining space for the description to enforce the 80-character limit
-            let max_desc_len = 80 - prefix.len() - time_str.len() - 3; // 3 for spaces
+            let max_desc_len = 80 - prefix.len() - time_str.len() - deadline_str.len() - 3;
             let safe_desc = if task.description.len() > max_desc_len {
                 format!("{}...", &task.description[..max_desc_len - 3])
             } else {
                 task.description.clone()
             };
 
-            let label = format!("{} {} {}", prefix, safe_desc, time_str);
+            let label = format!("{} {}{}{}", prefix, safe_desc, deadline_str, time_str);
 
             buttons.push(
                 serenity::CreateButton::new(format!(
