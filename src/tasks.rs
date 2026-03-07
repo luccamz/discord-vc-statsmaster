@@ -156,5 +156,18 @@ pub async fn deadline_check_task(db: SqlitePool) {
         )
         .execute(&db)
         .await;
+
+        let _ = sqlx::query!(
+            "DELETE FROM user_tasks 
+             WHERE terminated_at IS NOT NULL 
+             AND task_id NOT IN (
+                 SELECT task_id FROM user_tasks 
+                 WHERE terminated_at IS NOT NULL 
+                 ORDER BY terminated_at DESC 
+                 LIMIT 500 -- Global retention limit across all users
+             )"
+        )
+        .execute(&db)
+        .await;
     }
 }

@@ -316,7 +316,7 @@ pub async fn delete_task(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
 
     let tasks = sqlx::query!(
-        "SELECT task_id, description, completed_at FROM user_tasks WHERE user_id = ? ORDER BY completed_at ASC, task_id DESC",
+        "SELECT task_id, description, completed_at, terminated_at FROM user_tasks WHERE user_id = ? ORDER BY completed_at ASC, terminated_at ASC, task_id DESC",
         user_id
     )
     .fetch_all(&ctx.data().db)
@@ -329,7 +329,9 @@ pub async fn delete_task(ctx: Context<'_>) -> Result<(), Error> {
 
     let mut options = Vec::new();
     for task in tasks {
-        let prefix = if task.completed_at.is_some() {
+        let prefix = if task.terminated_at.is_some() {
+            "[-] "
+        } else if task.completed_at.is_some() {
             "[x] "
         } else {
             "[ ] "
