@@ -158,7 +158,6 @@ pub async fn handle_event(
                 let now = chrono::Utc::now().timestamp();
                 let mut sessions = data.active_sessions.lock().await;
 
-                // 1. Split the time: Commit the duration of the PREVIOUS task to the database
                 if let Some(session) = sessions.get_mut(&(user_id as u64, guild_id as u64)) {
                     let duration = now - session.start_time;
 
@@ -190,7 +189,6 @@ pub async fn handle_event(
                         }
                     }
 
-                    // 2. Register the newly selected task and reset the start_time
                     session.start_time = now;
                     if selected_value == "none" {
                         session.active_task_id = None;
@@ -200,7 +198,6 @@ pub async fn handle_event(
                 }
                 drop(sessions);
 
-                // 3. Update the persistent default for future sessions
                 sqlx::query!(
                     "UPDATE user_tasks SET is_last_selected = 0 WHERE user_id = ?",
                     user_id
@@ -228,15 +225,53 @@ pub async fn handle_event(
                     "Nothing in particular".to_string()
                 };
 
-                // 4. Update the UI prompt to reflect the change
+                // Re-fetch pending tasks to build the updated dropdown
+                let pending_tasks = sqlx::query!(
+                    "SELECT task_id, description FROM user_tasks WHERE user_id = ? AND completed_at IS NULL",
+                    user_id
+                )
+                .fetch_all(&data.db)
+                .await?;
+
+                let mut options = Vec::new();
+                let mut no_task_opt =
+                    serenity::CreateSelectMenuOption::new("Nothing in particular", "none");
+
+                if selected_value == "none" {
+                    no_task_opt = no_task_opt.default_selection(true);
+                }
+                options.push(no_task_opt);
+
+                for task in pending_tasks {
+                    let mut opt = serenity::CreateSelectMenuOption::new(
+                        &task.description,
+                        task.task_id.unwrap().to_string(),
+                    );
+                    if task.task_id.unwrap().to_string() == *selected_value {
+                        opt = opt.default_selection(true);
+                    }
+                    options.push(opt);
+                }
+
+                options.truncate(25);
+
+                let updated_menu = serenity::CreateSelectMenu::new(
+                    format!("task_select_{}", user_id),
+                    serenity::CreateSelectMenuKind::String { options },
+                );
+
                 component
                     .create_response(
                         ctx,
                         serenity::CreateInteractionResponse::UpdateMessage(
-                            serenity::CreateInteractionResponseMessage::new().content(format!(
-                                "<@{}> Currently working on.. {}. Change status?",
-                                user_id, selected_desc
-                            )),
+                            serenity::CreateInteractionResponseMessage::new()
+                                .content(format!(
+                                    "<@{}> Currently working on.. {}. Change status?",
+                                    user_id, selected_desc
+                                ))
+                                .components(vec![serenity::CreateActionRow::SelectMenu(
+                                    updated_menu,
+                                )]), // Send the new menu
                         ),
                     )
                     .await?;

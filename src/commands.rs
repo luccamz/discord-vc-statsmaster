@@ -344,7 +344,7 @@ pub async fn build_todo_components(
     user_id: i64,
 ) -> Result<Vec<serenity::CreateActionRow>, Error> {
     let tasks = sqlx::query!(
-        "SELECT task_id, description, completed_at FROM user_tasks 
+        "SELECT task_id, description, completed_at, time_spent_seconds FROM user_tasks 
          WHERE user_id = ? 
          ORDER BY completed_at ASC, task_id DESC 
          LIMIT 25",
@@ -357,32 +357,34 @@ pub async fn build_todo_components(
     for chunk in tasks.chunks(5) {
         let mut buttons = Vec::new();
         for task in chunk {
-            let label = if task.completed_at.is_some() {
-                format!("[x] {}", task.description)
-            } else {
-                format!("[ ] {}", task.description)
-            };
+            let hours = task.time_spent_seconds / 3600;
+            let minutes = (task.time_spent_seconds % 3600) / 60;
+            let time_str = format!("({}h {}m)", hours, minutes);
 
+            let prefix = if task.completed_at.is_some() { "[x]" } else { "[ ]" };
             let style = if task.completed_at.is_some() {
                 serenity::ButtonStyle::Success
             } else {
                 serenity::ButtonStyle::Secondary
             };
 
-            let safe_label = if label.len() > 80 {
-                format!("{}...", &label[..77])
+            // Calculate remaining space for the description to enforce the 80-character limit
+            let max_desc_len = 80 - prefix.len() - time_str.len() - 3; // 3 for spaces
+            let safe_desc = if task.description.len() > max_desc_len {
+                format!("{}...", &task.description[..max_desc_len - 3])
             } else {
-                label
+                task.description.clone()
             };
 
-            // Added .unwrap() to task_id
+            let label = format!("{} {} {}", prefix, safe_desc, time_str);
+
             buttons.push(
                 serenity::CreateButton::new(format!(
                     "task_toggle_{}_{}",
                     task.task_id.unwrap(),
                     user_id
                 ))
-                .label(safe_label)
+                .label(label)
                 .style(style),
             );
         }
