@@ -299,25 +299,34 @@ pub async fn delete_task(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
 
     let tasks = sqlx::query!(
-        "SELECT task_id, description FROM user_tasks WHERE user_id = ? AND completed_at IS NULL",
+        "SELECT task_id, description, completed_at FROM user_tasks WHERE user_id = ? ORDER BY completed_at ASC, task_id DESC",
         user_id
     )
     .fetch_all(&ctx.data().db)
     .await?;
 
     if tasks.is_empty() {
-        ctx.say("You have no active tasks to delete.").await?;
+        ctx.say("You have no tasks to delete.").await?;
         return Ok(());
     }
 
     let mut options = Vec::new();
     for task in tasks {
-        let label = if task.description.len() > 80 {
-            format!("{}...", &task.description[..77])
+        let prefix = if task.completed_at.is_some() {
+            "[x] "
+        } else {
+            "[ ] "
+        };
+
+        let max_desc_len = 80 - prefix.len();
+        let safe_desc = if task.description.len() > max_desc_len {
+            format!("{}...", &task.description[..max_desc_len - 3])
         } else {
             task.description.clone()
         };
-        // Added .unwrap() to task_id
+
+        let label = format!("{}{}", prefix, safe_desc);
+
         options.push(serenity::CreateSelectMenuOption::new(
             label,
             task.task_id.unwrap().to_string(),
@@ -361,7 +370,11 @@ pub async fn build_todo_components(
             let minutes = (task.time_spent_seconds % 3600) / 60;
             let time_str = format!("({}h {}m)", hours, minutes);
 
-            let prefix = if task.completed_at.is_some() { "[x]" } else { "[ ]" };
+            let prefix = if task.completed_at.is_some() {
+                "[x]"
+            } else {
+                "[ ]"
+            };
             let style = if task.completed_at.is_some() {
                 serenity::ButtonStyle::Success
             } else {
