@@ -342,18 +342,20 @@ pub async fn handle_event(
                 else {
                     return Ok(());
                 };
-                let task_id: i64 = values[0].parse().unwrap();
 
-                sqlx::query!("DELETE FROM user_tasks WHERE task_id = ?", task_id)
-                    .execute(&data.db)
-                    .await?;
+                for val in values {
+                    let task_id: i64 = val.parse().unwrap();
+                    sqlx::query!("DELETE FROM user_tasks WHERE task_id = ?", task_id)
+                        .execute(&data.db)
+                        .await?;
+                }
 
                 component
                     .create_response(
                         ctx,
                         serenity::CreateInteractionResponse::UpdateMessage(
                             serenity::CreateInteractionResponseMessage::new()
-                                .content("Task deleted successfully.")
+                                .content(format!("Successfully deleted {} task(s).", values.len()))
                                 .components(vec![]),
                         ),
                     )

@@ -41,7 +41,7 @@ async fn main() {
                 config_schedule(),
                 add_task(),
                 todo(),
-                delete_task(),
+                delete_tasks(),
                 config_timezone(),
             ],
             event_handler: |ctx, event, _framework, data| {

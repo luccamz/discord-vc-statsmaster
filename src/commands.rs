@@ -290,13 +290,12 @@ pub async fn config_timezone(
 pub async fn add_task(
     ctx: Context<'_>,
     #[description = "Task description"] description: String,
-    #[description = "Optional deadline (YYYY-MM-DD HH:MM)"] deadline: Option<String>,
+    #[description = "Optional deadline (DD/MM/YYYY HH:MM)"] deadline: Option<String>,
 ) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
 
     let mut deadline_ts = None;
     if let Some(dl_str) = deadline {
-        // Fetch the user's configured offset, defaulting to 0 (UTC) if not set
         let setting = sqlx::query!(
             "SELECT timezone_offset FROM user_settings WHERE user_id = ?",
             user_id
@@ -306,14 +305,14 @@ pub async fn add_task(
 
         let offset = setting.map(|s| s.timezone_offset).unwrap_or(0);
 
-        match chrono::NaiveDateTime::parse_from_str(&dl_str, "%Y-%m-%d %H:%M") {
+        match chrono::NaiveDateTime::parse_from_str(&dl_str, "%d/%m/%Y %H:%M") {
             Ok(dt) => {
                 let utc_dt = dt - chrono::Duration::hours(offset);
                 deadline_ts = Some(utc_dt.and_utc().timestamp());
             }
             Err(_) => {
                 ctx.say(
-                    "Invalid deadline format. Use `YYYY-MM-DD HH:MM` (e.g., `2026-12-31 23:59`).",
+                    "Invalid deadline format. Use `DD/MM/YYYY HH:MM` (e.g., `31/12/2026 23:59`).",
                 )
                 .await?;
                 return Ok(());
@@ -356,9 +355,9 @@ pub async fn todo(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Deletes a task from your list.
+/// Deletes multiple tasks from your list.
 #[poise::command(slash_command, guild_only)]
-pub async fn delete_task(ctx: Context<'_>) -> Result<(), Error> {
+pub async fn delete_tasks(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
 
     let tasks = sqlx::query!(
@@ -399,14 +398,17 @@ pub async fn delete_task(ctx: Context<'_>) -> Result<(), Error> {
     }
 
     options.truncate(25);
+    let max_selectable = options.len() as u8;
 
     let menu = serenity::CreateSelectMenu::new(
         format!("task_delete_{}", user_id),
         serenity::CreateSelectMenuKind::String { options },
-    );
+    )
+    .min_values(1)
+    .max_values(max_selectable); // Enables multiple selection
 
     let reply = poise::CreateReply::default()
-        .content("Select a task to permanently delete:")
+        .content("Select the tasks you wish to permanently delete:")
         .components(vec![serenity::CreateActionRow::SelectMenu(menu)]);
 
     ctx.send(reply).await?;
@@ -447,7 +449,7 @@ pub async fn build_todo_components(
             let deadline_str = match task.deadline {
                 Some(ts) => {
                     let dt = chrono::Utc.timestamp_opt(ts, 0).unwrap();
-                    format!(" [due: {}]", dt.format("%m/%d"))
+                    format!(" [due: {}]", dt.format("%d/%m"))
                 }
                 None => String::new(),
             };
