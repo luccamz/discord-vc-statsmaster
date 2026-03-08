@@ -106,7 +106,6 @@ pub async fn leaderboard(
     Ok(())
 }
 
-/// Resets voice time. Provide a user to reset only their stats, or omit to reset the entire server.
 #[poise::command(slash_command, guild_only, required_permissions = "ADMINISTRATOR")]
 pub async fn reset_stats(
     ctx: Context<'_>,
@@ -114,36 +113,104 @@ pub async fn reset_stats(
 ) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
 
-    match user {
-        Some(u) => {
-            let user_id = u.id.get() as i64;
-            sqlx::query!(
-                "UPDATE voice_stats 
-                SET total_seconds = 0,
-                    personal_record = MAX(personal_record, total_seconds)
-                WHERE user_id = ? AND guild_id = ?",
-                user_id,
-                guild_id
+    let target_text = match &user {
+        Some(u) => format!("<@{}>'s", u.id.get()),
+        None => "the entire server's".to_string(),
+    };
+
+    let components = vec![serenity::CreateActionRow::Buttons(vec![
+        serenity::CreateButton::new("confirm_reset")
+            .label("Confirm")
+            .style(serenity::ButtonStyle::Danger),
+        serenity::CreateButton::new("cancel_reset")
+            .label("Cancel")
+            .style(serenity::ButtonStyle::Secondary),
+    ])];
+
+    let reply = poise::CreateReply::default()
+        .content(format!(
+            "Are you sure you want to reset {} voice statistics?",
+            target_text
+        ))
+        .components(components);
+
+    let handle = ctx.send(reply).await?;
+
+    if let Some(mci) = serenity::ComponentInteractionCollector::new(ctx)
+        .author_id(ctx.author().id)
+        .channel_id(ctx.channel_id())
+        .timeout(std::time::Duration::from_secs(30))
+        .await
+    {
+        if mci.data.custom_id == "confirm_reset" {
+            match user {
+                Some(u) => {
+                    let user_id = u.id.get() as i64;
+                    sqlx::query!(
+                        "UPDATE voice_stats 
+                        SET total_seconds = 0,
+                            personal_record = MAX(personal_record, total_seconds)
+                        WHERE user_id = ? AND guild_id = ?",
+                        user_id,
+                        guild_id
+                    )
+                    .execute(&ctx.data().db)
+                    .await?;
+
+                    mci.create_response(
+                        ctx,
+                        serenity::CreateInteractionResponse::UpdateMessage(
+                            serenity::CreateInteractionResponseMessage::new()
+                                .content(format!("Reset voice statistics for <@{}>.", user_id))
+                                .components(vec![]),
+                        ),
+                    )
+                    .await?;
+                }
+                None => {
+                    sqlx::query!(
+                        "UPDATE voice_stats 
+                        SET total_seconds = 0,
+                            personal_record = MAX(personal_record, total_seconds)
+                        WHERE guild_id = ?",
+                        guild_id
+                    )
+                    .execute(&ctx.data().db)
+                    .await?;
+
+                    mci.create_response(
+                        ctx,
+                        serenity::CreateInteractionResponse::UpdateMessage(
+                            serenity::CreateInteractionResponseMessage::new()
+                                .content("Reset all voice statistics for this server.")
+                                .components(vec![]),
+                        ),
+                    )
+                    .await?;
+                }
+            }
+        } else {
+            mci.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::UpdateMessage(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("Reset cancelled.")
+                        .components(vec![]),
+                ),
             )
-            .execute(&ctx.data().db)
             .await?;
-            ctx.say(format!("Reset voice statistics for <@{}>.", user_id))
-                .await?;
         }
-        None => {
-            sqlx::query!(
-                "UPDATE voice_stats 
-                SET total_seconds = 0,
-                    personal_record = MAX(personal_record, total_seconds)
-                WHERE guild_id = ?",
-                guild_id
+    } else {
+        let _ = handle
+            .edit(
+                ctx,
+                poise::CreateReply::default()
+                    .content("Reset cancelled (timeout).")
+                    .components(vec![]),
             )
-            .execute(&ctx.data().db)
-            .await?;
-            ctx.say("Reset all voice statistics for this server.")
-                .await?;
-        }
+            .await;
     }
+
     Ok(())
 }
 
