@@ -486,7 +486,6 @@ pub async fn build_todo_components(
     db: &SqlitePool,
     user_id: i64,
 ) -> Result<Vec<serenity::CreateActionRow>, Error> {
-    // Fetch terminated_at and order by active -> completed -> terminated
     let tasks = sqlx::query!(
         "SELECT task_id, description, completed_at, terminated_at, time_spent_seconds, deadline 
          FROM user_tasks 
@@ -506,6 +505,8 @@ pub async fn build_todo_components(
     .await?;
 
     let mut rows = Vec::new();
+    let now = chrono::Utc::now();
+
     for chunk in tasks.chunks(5) {
         let mut buttons = Vec::new();
         for task in chunk {
@@ -516,7 +517,19 @@ pub async fn build_todo_components(
             let deadline_str = match task.deadline {
                 Some(ts) => {
                     let dt = chrono::Utc.timestamp_opt(ts, 0).unwrap();
-                    format!(" [due: {}]", dt.format("%d/%m"))
+                    let diff = dt - now;
+
+                    if diff.num_seconds() < 0 {
+                        " [Overdue]".to_string()
+                    } else if diff.num_days() > 0 {
+                        format!(" [{}d left]", diff.num_days())
+                    } else if diff.num_hours() > 0 {
+                        format!(" [{}h left]", diff.num_hours())
+                    } else if diff.num_minutes() > 0 {
+                        format!(" [{}m left]", diff.num_minutes())
+                    } else {
+                        " [<1m left]".to_string()
+                    }
                 }
                 None => String::new(),
             };
@@ -554,7 +567,6 @@ pub async fn build_todo_components(
             .label(label)
             .style(style);
 
-            // Disable interaction if the task is strictly terminated
             if task.terminated_at.is_some() {
                 button = button.disabled(true);
             }
