@@ -149,6 +149,16 @@ pub async fn handle_event(
             if component.data.custom_id.starts_with("task_select_") {
                 let extracted_id = component.data.custom_id.replace("task_select_", "");
                 if extracted_id != user_id.to_string() {
+                    component
+                        .create_response(
+                            ctx,
+                            serenity::CreateInteractionResponse::Message(
+                                serenity::CreateInteractionResponseMessage::new()
+                                    .content("Nuh huh, can't touch it!")
+                                    .ephemeral(true), // Ensures only the clicking user sees this warning
+                            ),
+                        )
+                        .await?;
                     return Ok(());
                 }
 
@@ -290,6 +300,16 @@ pub async fn handle_event(
                     let target_user_id: i64 = parts[3].parse().unwrap();
 
                     if target_user_id != user_id {
+                        component
+                            .create_response(
+                                ctx,
+                                serenity::CreateInteractionResponse::Message(
+                                    serenity::CreateInteractionResponseMessage::new()
+                                        .content("You cannot modify another user's todo list.")
+                                        .ephemeral(true), // Ensures only the clicking user sees this warning
+                                ),
+                            )
+                            .await?;
                         return Ok(());
                     }
 
@@ -334,6 +354,16 @@ pub async fn handle_event(
             } else if component.data.custom_id.starts_with("task_delete_") {
                 let extracted_id = component.data.custom_id.replace("task_delete_", "");
                 if extracted_id != user_id.to_string() {
+                    component
+                        .create_response(
+                            ctx,
+                            serenity::CreateInteractionResponse::Message(
+                                serenity::CreateInteractionResponseMessage::new()
+                                    .content("Nope, not gonna happen...")
+                                    .ephemeral(true), // Ensures only the clicking user sees this warning
+                            ),
+                        )
+                        .await?;
                     return Ok(());
                 }
 
