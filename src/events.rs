@@ -97,14 +97,23 @@ pub async fn handle_event(
                     );
 
                     let channel = serenity::ChannelId::new(current_channel_id as u64);
-                    let _ = channel
+                    if let Ok(message) = channel
                         .send_message(
                             ctx,
                             serenity::CreateMessage::new()
                                 .content(prompt_content)
                                 .select_menu(menu),
                         )
-                        .await;
+                        .await
+                    {
+                        let http = ctx.http.clone();
+
+                        // Spawns a background task to delete the prompt after 2 minutes
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                            let _ = message.delete(&http).await;
+                        });
+                    }
                 }
             } else if let Some(session) = sessions.remove(&(user_id as u64, guild_id as u64)) {
                 let duration = now - session.start_time;
