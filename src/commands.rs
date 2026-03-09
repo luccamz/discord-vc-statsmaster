@@ -444,10 +444,11 @@ pub async fn add_task(
                 deadline_ts = Some(utc_dt.and_utc().timestamp());
             }
             Err(_) => {
-                ctx.say(
-                    "Invalid deadline format. Use `DD/MM/YYYY HH:MM` (e.g., `31/12/2026 23:59`).",
-                )
-                .await?;
+                let reply = poise::CreateReply::default()
+                    .content("Invalid deadline format. Use `DD/MM/YYYY HH:MM` (e.g., `31/12/2026 23:59`).")
+                    .ephemeral(true);
+
+                ctx.send(reply).await?;
                 return Ok(());
             }
         }
@@ -462,7 +463,12 @@ pub async fn add_task(
     .execute(&ctx.data().db)
     .await?;
 
-    ctx.say(format!("Added task: **{}**", description)).await?;
+    let reply = poise::CreateReply::default()
+        .content(format!("Added task: **{}**", description))
+        .ephemeral(true);
+
+    ctx.send(reply).await?;
+
     Ok(())
 }
 
@@ -501,7 +507,12 @@ pub async fn delete_tasks(ctx: Context<'_>) -> Result<(), Error> {
     .await?;
 
     if tasks.is_empty() {
-        ctx.say("You have no tasks to delete.").await?;
+        let reply = poise::CreateReply::default()
+            .content("You have no tasks to delete.")
+            .ephemeral(true);
+
+        ctx.send(reply).await?;
+
         return Ok(());
     }
 
@@ -542,6 +553,7 @@ pub async fn delete_tasks(ctx: Context<'_>) -> Result<(), Error> {
 
     let reply = poise::CreateReply::default()
         .content("Select the tasks you wish to permanently delete:")
+        .ephemeral(true)
         .components(vec![serenity::CreateActionRow::SelectMenu(menu)]);
 
     ctx.send(reply).await?;
