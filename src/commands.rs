@@ -106,6 +106,73 @@ pub async fn leaderboard(
     Ok(())
 }
 
+/// Make current session not count
+#[poise::command(slash_command, guild_only)]
+pub async fn cancel_session(ctx: Context<'_>) -> Result<(), Error> {
+    let user_id = ctx.author().id.get();
+    let guild_id = ctx.guild_id().unwrap().get();
+
+    let components = vec![serenity::CreateActionRow::Buttons(vec![
+        serenity::CreateButton::new("confirm_cancel")
+            .label("Confirm")
+            .style(serenity::ButtonStyle::Danger),
+        serenity::CreateButton::new("cancel_cancel") // hah !
+            .label("Cancel")
+            .style(serenity::ButtonStyle::Secondary),
+    ])];
+
+    let reply = poise::CreateReply::default()
+        .content("Are you sure you want to cancel this sesh?")
+        .ephemeral(true)
+        .components(components);
+
+    let handle = ctx.send(reply).await?;
+
+    if let Some(mci) = serenity::ComponentInteractionCollector::new(ctx)
+        .author_id(ctx.author().id)
+        .channel_id(ctx.channel_id())
+        .timeout(std::time::Duration::from_secs(30))
+        .await
+    {
+        if mci.data.custom_id == "confirm_cancel" {
+            let mut sessions = ctx.data().active_sessions.lock().await;
+
+            sessions.remove(&(user_id, guild_id));
+
+            mci.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::UpdateMessage(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("Session cancelled!")
+                        .components(vec![]),
+                ),
+            )
+            .await?;
+        } else {
+            mci.create_response(
+                ctx,
+                serenity::CreateInteractionResponse::UpdateMessage(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("Didn't cancel.")
+                        .components(vec![]),
+                ),
+            )
+            .await?;
+        }
+    } else {
+        let _ = handle
+            .edit(
+                ctx,
+                poise::CreateReply::default()
+                    .content("Didn't cancel (timeout).")
+                    .components(vec![]),
+            )
+            .await;
+    }
+
+    Ok(())
+}
+
 /// Resets time of specified user or the whole server
 #[poise::command(slash_command, guild_only, required_permissions = "ADMINISTRATOR")]
 pub async fn reset_stats(

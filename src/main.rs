@@ -36,6 +36,7 @@ async fn main() {
             commands: vec![
                 stats(),
                 leaderboard(),
+                cancel_session(),
                 reset_stats(),
                 toggle_tracking(),
                 config_schedule(),
