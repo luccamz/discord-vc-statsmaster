@@ -248,60 +248,28 @@ pub async fn handle_event(
                     "Nothing in particular".to_string()
                 };
 
-                // Re-fetch pending tasks to build the updated dropdown
-                let pending_tasks = sqlx::query!(
-                    "SELECT task_id, description 
-                     FROM user_tasks 
-                     WHERE user_id = ? 
-                       AND completed_at IS NULL 
-                       AND terminated_at IS NULL",
-                    user_id
-                )
-                .fetch_all(&data.db)
-                .await?;
-
-                let mut options = Vec::new();
-                let mut no_task_opt =
-                    serenity::CreateSelectMenuOption::new("Nothing in particular", "none");
-
-                if selected_value == "none" {
-                    no_task_opt = no_task_opt.default_selection(true);
-                }
-                options.push(no_task_opt);
-
-                for task in pending_tasks {
-                    let mut opt = serenity::CreateSelectMenuOption::new(
-                        &task.description,
-                        task.task_id.unwrap().to_string(),
-                    );
-                    if task.task_id.unwrap().to_string() == *selected_value {
-                        opt = opt.default_selection(true);
-                    }
-                    options.push(opt);
-                }
-
-                options.truncate(25);
-
-                let updated_menu = serenity::CreateSelectMenu::new(
-                    format!("task_select_{}", user_id),
-                    serenity::CreateSelectMenuKind::String { options },
-                );
-
                 component
                     .create_response(
                         ctx,
                         serenity::CreateInteractionResponse::UpdateMessage(
                             serenity::CreateInteractionResponseMessage::new()
                                 .content(format!(
-                                    "<@{}> Currently working on.. {}. Change status?",
+                                    "<@{}> Active task updated to: **{}**.",
                                     user_id, selected_desc
                                 ))
-                                .components(vec![serenity::CreateActionRow::SelectMenu(
-                                    updated_menu,
-                                )]), // Send the new menu
+                                .components(vec![]), // Removes the dropdown menu
                         ),
                     )
                     .await?;
+
+                let msg = component.message.clone();
+                let http = ctx.http.clone();
+
+                // Spawns a background task to delete the confirmation text after 5 seconds
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    let _ = msg.delete(&http).await;
+                });
             } else if component.data.custom_id.starts_with("task_toggle_") {
                 let parts: Vec<&str> = component.data.custom_id.split('_').collect();
                 if parts.len() == 4 {
