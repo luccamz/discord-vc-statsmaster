@@ -106,6 +106,7 @@ pub async fn leaderboard(
     Ok(())
 }
 
+/// Resets time of specified user or the whole server
 #[poise::command(slash_command, guild_only, required_permissions = "ADMINISTRATOR")]
 pub async fn reset_stats(
     ctx: Context<'_>,
@@ -148,8 +149,7 @@ pub async fn reset_stats(
                     let user_id = u.id.get() as i64;
                     sqlx::query!(
                         "UPDATE voice_stats 
-                        SET total_seconds = 0,
-                            personal_record = MAX(personal_record, total_seconds)
+                        SET total_seconds = 0
                         WHERE user_id = ? AND guild_id = ?",
                         user_id,
                         guild_id
@@ -170,8 +170,7 @@ pub async fn reset_stats(
                 None => {
                     sqlx::query!(
                         "UPDATE voice_stats 
-                        SET total_seconds = 0,
-                            personal_record = MAX(personal_record, total_seconds)
+                        SET total_seconds = 0
                         WHERE guild_id = ?",
                         guild_id
                     )
