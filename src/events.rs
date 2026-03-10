@@ -47,6 +47,15 @@ pub async fn handle_event(
                     .fetch_all(&data.db)
                     .await?;
 
+                    // early return to avoid prompting the user when todo is empty
+                    if pending_tasks.is_empty() {
+                        e.insert(SessionData {
+                            start_time: now,
+                            active_task_id: None,
+                        });
+                        return Ok(());
+                    }
+
                     let mut initial_task_id = None;
                     let mut active_task_name = "Nothing in particular".to_string();
 
