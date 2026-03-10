@@ -16,8 +16,10 @@ async fn main() {
     dotenvy::dotenv().ok();
     let token = env::var("DISCORD_TOKEN").expect("Expected DISCORD_TOKEN");
 
+    let db_url = env::var("DATABASE_URL").unwrap_or("sqlite://stats.db?mode=rwc".to_string());
+
     let db = SqlitePoolOptions::new()
-        .connect("sqlite://stats.db?mode=rwc")
+        .connect(&db_url)
         .await
         .expect("Failed to connect to database");
 
