@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE user_tasks \n                         SET completed_at = CASE WHEN completed_at IS NULL THEN ? ELSE NULL END,\n                             is_last_selected = CASE WHEN completed_at IS NULL THEN 0 ELSE is_last_selected END\n                         WHERE task_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "cdc9c41d832718daec07222af8a813bc1359a7b71447b27b0fbd3d9d9173d415"
+}

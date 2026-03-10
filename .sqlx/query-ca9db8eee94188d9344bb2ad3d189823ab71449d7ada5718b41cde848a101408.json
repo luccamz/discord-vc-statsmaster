@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT task_id, description, completed_at, terminated_at, time_spent_seconds, deadline \n         FROM user_tasks \n         WHERE user_id = ? \n         ORDER BY \n            CASE \n                WHEN completed_at IS NULL AND terminated_at IS NULL THEN 0 \n                WHEN completed_at IS NOT NULL THEN 1 \n                ELSE 2 \n            END ASC,\n            deadline ASC, \n            task_id DESC \n         LIMIT 25",
+  "describe": {
+    "columns": [
+      {
+        "name": "task_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "description",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "completed_at",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "terminated_at",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "time_spent_seconds",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "deadline",
+        "ordinal": 5,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "ca9db8eee94188d9344bb2ad3d189823ab71449d7ada5718b41cde848a101408"
+}

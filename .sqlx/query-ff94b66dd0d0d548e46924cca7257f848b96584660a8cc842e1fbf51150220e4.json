@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT timezone_offset FROM user_settings WHERE user_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "timezone_offset",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ff94b66dd0d0d548e46924cca7257f848b96584660a8cc842e1fbf51150220e4"
+}

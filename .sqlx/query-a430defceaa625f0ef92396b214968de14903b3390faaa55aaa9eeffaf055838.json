@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT total_seconds, personal_record FROM voice_stats WHERE user_id = ? AND guild_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "total_seconds",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "personal_record",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "a430defceaa625f0ef92396b214968de14903b3390faaa55aaa9eeffaf055838"
+}

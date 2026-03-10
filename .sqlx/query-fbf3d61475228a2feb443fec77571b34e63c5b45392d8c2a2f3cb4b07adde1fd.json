@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT task_id, description, completed_at, terminated_at FROM user_tasks WHERE user_id = ? ORDER BY completed_at ASC, terminated_at ASC, task_id DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "task_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "description",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "completed_at",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "terminated_at",
+        "ordinal": 3,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "fbf3d61475228a2feb443fec77571b34e63c5b45392d8c2a2f3cb4b07adde1fd"
+}

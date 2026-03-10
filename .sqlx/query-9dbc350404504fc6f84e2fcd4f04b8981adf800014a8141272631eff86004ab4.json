@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO user_settings (user_id, timezone_offset) VALUES (?, ?) \n         ON CONFLICT(user_id) DO UPDATE SET timezone_offset = excluded.timezone_offset",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "9dbc350404504fc6f84e2fcd4f04b8981adf800014a8141272631eff86004ab4"
+}

@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT guild_id, announcement_channel_id, weeks_tracked FROM guild_settings \n             WHERE reset_day = ? AND reset_hour = ? AND reset_minute = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "guild_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "announcement_channel_id",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "weeks_tracked",
+        "ordinal": 2,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f23a9a1992ce52bd84f12af9fac909dbd543b6423cc479d466c813b08bb9401d"
+}

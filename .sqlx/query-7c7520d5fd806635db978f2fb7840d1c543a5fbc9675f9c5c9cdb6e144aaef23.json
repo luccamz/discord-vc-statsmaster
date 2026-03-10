@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM user_tasks \n             WHERE terminated_at IS NOT NULL \n             AND task_id NOT IN (\n                 SELECT task_id FROM user_tasks \n                 WHERE terminated_at IS NOT NULL \n                 ORDER BY terminated_at DESC \n                 LIMIT 500 -- Global retention limit across all users\n             )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "7c7520d5fd806635db978f2fb7840d1c543a5fbc9675f9c5c9cdb6e144aaef23"
+}

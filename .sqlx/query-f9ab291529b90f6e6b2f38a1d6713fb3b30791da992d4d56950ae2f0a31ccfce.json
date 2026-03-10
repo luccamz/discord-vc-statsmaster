@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO user_tasks (user_id, description, deadline) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "f9ab291529b90f6e6b2f38a1d6713fb3b30791da992d4d56950ae2f0a31ccfce"
+}

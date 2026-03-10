@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE voice_stats \n                        SET total_seconds = 0\n                        WHERE user_id = ? AND guild_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "677e4b8dff9c14bcbdd8547d8b572a59c82638bd420c215c233d2dcc1b64cd2f"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE user_tasks \n                                 SET time_spent_seconds = time_spent_seconds + ?,\n                                     record_session_seconds = MAX(record_session_seconds, ?)\n                                 WHERE task_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "e224ee0d040cc754617abf6c0f1cf7d98988da1b4bb712e05f4c60cb4225280e"
+}

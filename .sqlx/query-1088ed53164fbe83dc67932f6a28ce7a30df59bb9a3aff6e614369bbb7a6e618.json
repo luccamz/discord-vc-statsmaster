@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE user_tasks SET is_last_selected = 1 WHERE task_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "1088ed53164fbe83dc67932f6a28ce7a30df59bb9a3aff6e614369bbb7a6e618"
+}

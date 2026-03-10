@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO tracked_channels (channel_id, guild_id) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "20ce307e40dbb0ad6e45308ea46d84a2149e9ba5820e8d29960313282e89edfa"
+}

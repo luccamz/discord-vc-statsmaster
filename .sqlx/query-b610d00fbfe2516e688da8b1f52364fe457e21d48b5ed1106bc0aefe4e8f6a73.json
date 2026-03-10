@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM user_tasks \n                         WHERE user_id = ? AND completed_at IS NOT NULL \n                         AND task_id NOT IN (\n                             SELECT task_id FROM user_tasks \n                             WHERE user_id = ? AND completed_at IS NOT NULL \n                             ORDER BY completed_at DESC LIMIT 20\n                         )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b610d00fbfe2516e688da8b1f52364fe457e21d48b5ed1106bc0aefe4e8f6a73"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE user_tasks \n             SET terminated_at = ?, \n                 is_last_selected = 0 \n             WHERE completed_at IS NULL \n               AND terminated_at IS NULL \n               AND deadline <= ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "2b7e2e3fb07b79b6f91e8b8c794381947a42d09ae4313224940e24e265c617ea"
+}
