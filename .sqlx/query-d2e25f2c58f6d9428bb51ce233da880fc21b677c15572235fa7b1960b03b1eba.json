@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO bot_state (id, last_version) VALUES (1, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "d2e25f2c58f6d9428bb51ce233da880fc21b677c15572235fa7b1960b03b1eba"
+}

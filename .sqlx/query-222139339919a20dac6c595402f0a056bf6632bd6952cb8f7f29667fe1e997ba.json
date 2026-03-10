@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT changelog_channel_id FROM guild_settings WHERE changelog_channel_id IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "changelog_channel_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "222139339919a20dac6c595402f0a056bf6632bd6952cb8f7f29667fe1e997ba"
+}

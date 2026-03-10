@@ -656,3 +656,35 @@ pub async fn build_todo_components(
 
     Ok(rows)
 }
+
+/// Configures the channel for automated changelog broadcasts.
+#[poise::command(slash_command, guild_only, required_permissions = "ADMINISTRATOR")]
+pub async fn config_changelogs(
+    ctx: Context<'_>,
+    #[description = "Target channel for update announcements"] channel: serenity::Channel,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let channel_id = channel.id().get() as i64;
+
+    sqlx::query!(
+        "INSERT INTO guild_settings (guild_id, changelog_channel_id) 
+         VALUES (?, ?) 
+         ON CONFLICT(guild_id) DO UPDATE SET 
+         changelog_channel_id = excluded.changelog_channel_id",
+        guild_id,
+        channel_id
+    )
+    .execute(&ctx.data().db)
+    .await?;
+
+    let reply = poise::CreateReply::default()
+        .content(format!(
+            "Update changelogs will now be broadcast to <#{}>.",
+            channel_id
+        ))
+        .ephemeral(true);
+
+    ctx.send(reply).await?;
+
+    Ok(())
+}
