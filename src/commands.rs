@@ -667,8 +667,8 @@ pub async fn config_changelogs(
     let channel_id = channel.id().get() as i64;
 
     sqlx::query!(
-        "INSERT INTO guild_settings (guild_id, changelog_channel_id) 
-         VALUES (?, ?) 
+        "INSERT INTO guild_settings (guild_id, announcement_channel_id, changelog_channel_id) 
+         VALUES (?, 0, ?) 
          ON CONFLICT(guild_id) DO UPDATE SET 
          changelog_channel_id = excluded.changelog_channel_id",
         guild_id,
