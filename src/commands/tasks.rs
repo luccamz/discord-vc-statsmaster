@@ -30,6 +30,14 @@ pub async fn add_task(
             Ok(dt) => {
                 let utc_dt = dt - chrono::Duration::hours(offset);
                 deadline_ts = Some(utc_dt.and_utc().timestamp());
+                if deadline_ts.unwrap() <= chrono::Utc::now().timestamp() {
+                    let reply = poise::CreateReply::default()
+                        .content("Deadline cannot be in the past. Please provide a future date and time.")
+                        .ephemeral(true);
+
+                    ctx.send(reply).await?;
+                    return Ok(());
+                }
             }
             Err(_) => {
                 let reply = poise::CreateReply::default()
