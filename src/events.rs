@@ -9,6 +9,33 @@ pub async fn handle_event(
     data: &Data,
 ) -> Result<(), Error> {
     match event {
+        serenity::FullEvent::GuildDelete { incomplete, .. } => {
+            if !incomplete.unavailable {
+                let guild_id = incomplete.id.get() as i64;
+
+                // Delete the accumulated voice statistics
+                let stats_cleanup =
+                    sqlx::query!("DELETE FROM voice_stats WHERE guild_id = ?", guild_id)
+                        .execute(&data.db)
+                        .await;
+
+                if let Err(e) = stats_cleanup {
+                    eprintln!(
+                        "Failed to clean up voice_stats for guild {}: {}",
+                        guild_id, e
+                    );
+                }
+
+                let result =
+                    sqlx::query!("DELETE FROM guild_settings WHERE guild_id = ?", guild_id)
+                        .execute(&data.db)
+                        .await;
+
+                if let Err(e) = result {
+                    eprintln!("Failed to clean up guild settings for {}: {}", guild_id, e);
+                }
+            }
+        }
         serenity::FullEvent::VoiceStateUpdate { old: _, new } => {
             let user_id = new.user_id.get() as i64;
             let Some(guild_id_nonzero) = new.guild_id else {
