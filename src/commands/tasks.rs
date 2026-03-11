@@ -7,7 +7,9 @@ use sqlx::SqlitePool;
 #[poise::command(slash_command, guild_only)]
 pub async fn add_task(
     ctx: Context<'_>,
-    #[description = "Task description"] description: String,
+    #[description = "Task description"]
+    #[max_length = 200]
+    description: String,
     #[description = "Optional deadline (DD/MM/YYYY HH:MM)"] deadline: Option<String>,
 ) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
