@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM user_tasks WHERE task_id = (\n                        SELECT task_id FROM user_tasks \n                        WHERE user_id = ? \n                        ORDER BY \n                            CASE \n                                WHEN terminated_at IS NOT NULL THEN 1 \n                                WHEN completed_at IS NOT NULL THEN 2 \n                                ELSE 3 \n                            END ASC, \n                            task_id ASC \n                        LIMIT 1\n                    )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "cadf57d37362da4b55c4555a09e6cef527672d7f8e45b1d1970b30ff286e07f0"
+}

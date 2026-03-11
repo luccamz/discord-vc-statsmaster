@@ -13,6 +13,7 @@ pub async fn add_task(
     #[description = "Optional deadline (DD/MM/YYYY HH:MM)"] deadline: Option<String>,
 ) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
+    let task_per_user_limit = 100;
 
     let mut deadline_ts = None;
     if let Some(dl_str) = deadline {
@@ -39,6 +40,104 @@ pub async fn add_task(
                 return Ok(());
             }
         }
+    }
+
+    let task_count =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM user_tasks WHERE user_id = ?", user_id)
+            .fetch_one(&ctx.data().db)
+            .await?;
+
+    if task_count >= task_per_user_limit {
+        let components = vec![serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new("confirm_trim")
+                .label("Proceed & Trim")
+                .style(serenity::ButtonStyle::Danger),
+            serenity::CreateButton::new("cancel_trim")
+                .label("Cancel")
+                .style(serenity::ButtonStyle::Secondary),
+        ])];
+
+        let reply = ctx.send(
+            poise::CreateReply::default()
+                .content(format!(
+                    "You have reached the maximum of **{}** tasks. Adding this task will automatically delete your oldest task (prioritizing terminated, then completed, then pending). Do you want to proceed?",
+                    task_per_user_limit
+                ))
+                .components(components)
+                .ephemeral(true)
+        ).await?;
+
+        let mut message = reply.into_message().await?;
+
+        if let Some(interaction) = message
+            .await_component_interaction(ctx.serenity_context())
+            .timeout(std::time::Duration::from_secs(60))
+            .await
+        {
+            if interaction.data.custom_id == "cancel_trim" {
+                interaction
+                    .create_response(
+                        ctx.serenity_context(),
+                        serenity::CreateInteractionResponse::UpdateMessage(
+                            serenity::CreateInteractionResponseMessage::new()
+                                .content("Task creation cancelled.")
+                                .components(vec![]),
+                        ),
+                    )
+                    .await?;
+                return Ok(());
+            } else {
+                sqlx::query!(
+                    "DELETE FROM user_tasks WHERE task_id = (
+                        SELECT task_id FROM user_tasks 
+                        WHERE user_id = ? 
+                        ORDER BY 
+                            CASE 
+                                WHEN terminated_at IS NOT NULL THEN 1 
+                                WHEN completed_at IS NOT NULL THEN 2 
+                                ELSE 3 
+                            END ASC, 
+                            task_id ASC 
+                        LIMIT 1
+                    )",
+                    user_id
+                )
+                .execute(&ctx.data().db)
+                .await?;
+
+                interaction
+                    .create_response(
+                        ctx.serenity_context(),
+                        serenity::CreateInteractionResponse::UpdateMessage(
+                            serenity::CreateInteractionResponseMessage::new()
+                                .content(format!(
+                                    "Task added: **{}** (Oldest task was trimmed)",
+                                    description
+                                ))
+                                .components(vec![]),
+                        ),
+                    )
+                    .await?;
+            }
+        } else {
+            // Timeout cleanup
+            message
+                .edit(
+                    ctx.serenity_context(),
+                    serenity::EditMessage::new()
+                        .content("Task creation timed out.")
+                        .components(vec![]),
+                )
+                .await?;
+            return Ok(());
+        }
+    } else {
+        ctx.send(
+            poise::CreateReply::default()
+                .content(format!("Task added: **{}**", description))
+                .ephemeral(true),
+        )
+        .await?;
     }
 
     sqlx::query!(
