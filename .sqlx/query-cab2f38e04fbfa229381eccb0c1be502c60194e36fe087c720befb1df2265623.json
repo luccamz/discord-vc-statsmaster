@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM voice_stats WHERE guild_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "cab2f38e04fbfa229381eccb0c1be502c60194e36fe087c720befb1df2265623"
+}

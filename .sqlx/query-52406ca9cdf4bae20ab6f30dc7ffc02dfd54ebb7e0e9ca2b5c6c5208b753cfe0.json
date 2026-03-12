@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE user_tasks SET deadline = ? WHERE task_id = ? AND user_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "52406ca9cdf4bae20ab6f30dc7ffc02dfd54ebb7e0e9ca2b5c6c5208b753cfe0"
+}

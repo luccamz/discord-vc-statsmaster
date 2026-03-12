@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT task_id, description FROM user_tasks \n         WHERE user_id = ? AND completed_at IS NULL AND terminated_at IS NULL \n         AND description LIKE ? \n         ORDER BY task_id DESC \n         LIMIT 25",
+  "describe": {
+    "columns": [
+      {
+        "name": "task_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "description",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "7f3a8709200a8a24323c528cfa9042f21b87006915d755012fc8ddfc85514c8d"
+}
