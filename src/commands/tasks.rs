@@ -10,7 +10,8 @@ pub async fn add_task(
     #[description = "Task description"]
     #[max_length = 200]
     description: String,
-    #[description = "Optional deadline (DD/MM/YYYY HH:MM)"] deadline: Option<String>,
+    #[description = "Format: DD/MM/YYYY HH:MM, 'today HH:MM', 'in 24 hours', 'in 7 days'"]
+    deadline: Option<String>,
 ) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
     let task_per_user_limit = 100;
@@ -25,27 +26,52 @@ pub async fn add_task(
         .await?;
 
         let offset = setting.map(|s| s.timezone_offset).unwrap_or(0);
+        let now_utc = chrono::Utc::now().naive_utc();
+        let user_now = now_utc + chrono::Duration::hours(offset);
+        let dl_lower = dl_str.to_lowercase();
 
-        match chrono::NaiveDateTime::parse_from_str(&dl_str, "%d/%m/%Y %H:%M") {
-            Ok(dt) => {
-                let utc_dt = dt - chrono::Duration::hours(offset);
-                deadline_ts = Some(utc_dt.and_utc().timestamp());
-                if deadline_ts.unwrap() <= chrono::Utc::now().timestamp() {
-                    let reply = poise::CreateReply::default()
-                        .content("Deadline cannot be in the past. Please provide a future date and time.")
-                        .ephemeral(true);
-
-                    ctx.send(reply).await?;
+        if dl_lower == "in 24 hours" {
+            deadline_ts = Some(
+                (now_utc + chrono::Duration::hours(24))
+                    .and_utc()
+                    .timestamp(),
+            );
+        } else if dl_lower == "in 7 days" {
+            deadline_ts = Some((now_utc + chrono::Duration::days(7)).and_utc().timestamp());
+        } else if let Some(time_str) = dl_lower.strip_prefix("today ") {
+            match chrono::NaiveTime::parse_from_str(time_str.trim(), "%H:%M") {
+                Ok(time) => {
+                    // Extract the user's current local date, apply the requested time, and convert back to UTC
+                    let local_dt = user_now.date().and_time(time);
+                    let utc_dt = local_dt - chrono::Duration::hours(offset);
+                    deadline_ts = Some(utc_dt.and_utc().timestamp());
+                }
+                Err(_) => {
+                    ctx.send(
+                        poise::CreateReply::default()
+                            .content(
+                                "Invalid time format. Use `today HH:MM` (e.g., `today 15:30`).",
+                            )
+                            .ephemeral(true),
+                    )
+                    .await?;
                     return Ok(());
                 }
             }
-            Err(_) => {
-                let reply = poise::CreateReply::default()
-                    .content("Invalid deadline format. Use `DD/MM/YYYY HH:MM` (e.g., `31/12/2026 23:59`).")
-                    .ephemeral(true);
-
-                ctx.send(reply).await?;
-                return Ok(());
+        } else {
+            match chrono::NaiveDateTime::parse_from_str(&dl_str, "%d/%m/%Y %H:%M") {
+                Ok(dt) => {
+                    let utc_dt = dt - chrono::Duration::hours(offset);
+                    deadline_ts = Some(utc_dt.and_utc().timestamp());
+                }
+                Err(_) => {
+                    ctx.send(
+                        poise::CreateReply::default()
+                            .content("Invalid deadline format. Use `DD/MM/YYYY HH:MM`, `today HH:MM`, `in 24 hours`, or `in 7 days`.")
+                            .ephemeral(true)
+                    ).await?;
+                    return Ok(());
+                }
             }
         }
     }
