@@ -166,6 +166,130 @@ pub async fn add_task(
     Ok(())
 }
 
+#[allow(dead_code)]
+pub async fn pending_tasks_autocomplete(
+    ctx: crate::state::Context<'_>,
+    partial: &str,
+) -> Vec<String> {
+    let user_id = ctx.author().id.get() as i64;
+    let partial_match = format!("%{}%", partial);
+
+    let tasks = sqlx::query!(
+        "SELECT task_id, description FROM user_tasks 
+         WHERE user_id = ? AND completed_at IS NULL AND terminated_at IS NULL 
+         AND description LIKE ? 
+         ORDER BY task_id DESC 
+         LIMIT 25",
+        user_id,
+        partial_match
+    )
+    .fetch_all(&ctx.data().db)
+    .await
+    .unwrap_or_default();
+
+    tasks
+        .into_iter()
+        .map(|task| {
+            let task_id = task.task_id.unwrap_or(0);
+
+            let safe_desc = if task.description.len() > 80 {
+                format!("{}...", &task.description[..80])
+            } else {
+                task.description
+            };
+
+            format!("{} - {}", task_id, safe_desc)
+        })
+        .collect()
+}
+
+/// Modifies or removes the deadline of an existing task.
+#[poise::command(slash_command, guild_only)]
+pub async fn edit_deadline(
+    ctx: crate::state::Context<'_>,
+    #[description = "Search and select the task to update"]
+    #[autocomplete = "crate::pending_tasks_autocomplete"]
+    // Ensure path matches your structure
+    task_selection: String,
+    #[description = "New deadline (DD/MM/YYYY HH:MM) or type 'clear' to remove"]
+    new_deadline: String,
+) -> Result<(), crate::state::Error> {
+    let user_id = ctx.author().id.get() as i64;
+
+    let task_id_str = task_selection.split(" - ").next().unwrap_or("");
+    let task_id: i64 = match task_id_str.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            ctx.send(
+                poise::CreateReply::default()
+                    .content("Invalid task selection. Please select an option from the autocomplete menu.")
+                    .ephemeral(true)
+            ).await?;
+            return Ok(());
+        }
+    };
+
+    let mut deadline_ts = None;
+
+    if new_deadline.to_lowercase() != "clear" {
+        let setting = sqlx::query!(
+            "SELECT timezone_offset FROM user_settings WHERE user_id = ?",
+            user_id
+        )
+        .fetch_optional(&ctx.data().db)
+        .await?;
+
+        let offset = setting.map(|s| s.timezone_offset).unwrap_or(0);
+
+        match chrono::NaiveDateTime::parse_from_str(&new_deadline, "%d/%m/%Y %H:%M") {
+            Ok(dt) => {
+                let utc_dt = dt - chrono::Duration::hours(offset);
+                deadline_ts = Some(utc_dt.and_utc().timestamp());
+            }
+            Err(_) => {
+                ctx.send(
+                    poise::CreateReply::default()
+                        .content("Invalid deadline format. Use `DD/MM/YYYY HH:MM` (e.g., `31/12/2026 23:59`) or type `clear`.")
+                        .ephemeral(true)
+                ).await?;
+                return Ok(());
+            }
+        }
+    }
+
+    let result = sqlx::query!(
+        "UPDATE user_tasks SET deadline = ? WHERE task_id = ? AND user_id = ?",
+        deadline_ts,
+        task_id,
+        user_id
+    )
+    .execute(&ctx.data().db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        ctx.send(
+            poise::CreateReply::default()
+                .content("Task not found or you do not have permission to edit it.")
+                .ephemeral(true),
+        )
+        .await?;
+    } else {
+        let response_msg = match deadline_ts {
+            Some(_) => format!("Task deadline updated to **{}**.", new_deadline),
+            None => "Task deadline has been cleared.".to_string(),
+        };
+
+        ctx.send(
+            poise::CreateReply::default()
+                .content(response_msg)
+                .ephemeral(true),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
 pub async fn build_todo_components(
     db: &SqlitePool,
     user_id: i64,

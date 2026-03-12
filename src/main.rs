@@ -133,6 +133,7 @@ async fn main() {
                 toggle_tracking(),
                 config_schedule(),
                 add_task(),
+                edit_deadline(),
                 todo(),
                 delete_tasks(),
                 config_timezone(),
