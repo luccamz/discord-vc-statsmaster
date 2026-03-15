@@ -185,12 +185,6 @@ pub async fn add_task(
     .execute(&ctx.data().db)
     .await?;
 
-    let reply = poise::CreateReply::default()
-        .content(format!("Added task: **{}**", description))
-        .ephemeral(true);
-
-    ctx.send(reply).await?;
-
     Ok(())
 }
 
