@@ -174,10 +174,28 @@ pub async fn handle_event(
                         .await
                     {
                         let http = ctx.http.clone();
+                        let shard_messenger = ctx.shard.clone();
 
-                        // Spawns a background task to delete the prompt after 2 minutes
                         tokio::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                            use poise::serenity_prelude as serenity;
+                            use serenity::futures::StreamExt;
+
+                            let mut collector =
+                                serenity::collector::collect(&shard_messenger, move |event| {
+                                    if let serenity::Event::VoiceStateUpdate(data) = event {
+                                        if data.voice_state.user_id.get() as i64 == user_id {
+                                            return Some(());
+                                        }
+                                    }
+                                    None
+                                });
+
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(86400),
+                                collector.next(),
+                            )
+                            .await;
+
                             let _ = message.delete(&http).await;
                         });
                     }
@@ -286,28 +304,60 @@ pub async fn handle_event(
                     "Nothing in particular".to_string()
                 };
 
+                // Re-fetch pending tasks to build the updated dropdown
+                let pending_tasks = sqlx::query!(
+                    "SELECT task_id, description 
+                     FROM user_tasks 
+                     WHERE user_id = ? 
+                       AND completed_at IS NULL 
+                       AND terminated_at IS NULL",
+                    user_id
+                )
+                .fetch_all(&data.db)
+                .await?;
+
+                let mut options = Vec::new();
+                let mut no_task_opt =
+                    serenity::CreateSelectMenuOption::new("Nothing in particular", "none");
+
+                if selected_value == "none" {
+                    no_task_opt = no_task_opt.default_selection(true);
+                }
+                options.push(no_task_opt);
+
+                for task in pending_tasks {
+                    let mut opt = serenity::CreateSelectMenuOption::new(
+                        &task.description,
+                        task.task_id.unwrap().to_string(),
+                    );
+                    if task.task_id.unwrap().to_string() == *selected_value {
+                        opt = opt.default_selection(true);
+                    }
+                    options.push(opt);
+                }
+
+                options.truncate(25);
+
+                let updated_menu = serenity::CreateSelectMenu::new(
+                    format!("task_select_{}", user_id),
+                    serenity::CreateSelectMenuKind::String { options },
+                );
+
                 component
                     .create_response(
                         ctx,
                         serenity::CreateInteractionResponse::UpdateMessage(
                             serenity::CreateInteractionResponseMessage::new()
                                 .content(format!(
-                                    "<@{}> Active task updated to: **{}**.",
+                                    "<@{}> Currently working on.. {}. Change status?",
                                     user_id, selected_desc
                                 ))
-                                .components(vec![]), // Removes the dropdown menu
+                                .components(vec![serenity::CreateActionRow::SelectMenu(
+                                    updated_menu,
+                                )]), // Send the new menu
                         ),
                     )
                     .await?;
-
-                let msg = component.message.clone();
-                let http = ctx.http.clone();
-
-                // Spawns a background task to delete the confirmation text after 5 seconds
-                tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    let _ = msg.delete(&http).await;
-                });
             } else if component.data.custom_id.starts_with("task_toggle_") {
                 let parts: Vec<&str> = component.data.custom_id.split('_').collect();
                 if parts.len() == 4 {
