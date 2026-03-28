@@ -60,6 +60,37 @@ pub async fn handle_event(
                 is_in_tracked_channel = existing.is_some();
             }
 
+            if let Some(session) = sessions.remove(&(user_id as u64, guild_id as u64)) {
+                let duration = now - session.start_time;
+                if duration > 0 {
+                    sqlx::query!(
+                        "INSERT INTO voice_stats (user_id, guild_id, total_seconds) 
+                         VALUES (?, ?, ?) ON CONFLICT(user_id, guild_id) 
+                         DO UPDATE SET total_seconds = total_seconds + ?",
+                        user_id,
+                        guild_id,
+                        duration,
+                        duration
+                    )
+                    .execute(&data.db)
+                    .await?;
+
+                    if let Some(task_id) = session.active_task_id {
+                        sqlx::query!(
+                            "UPDATE user_tasks 
+                             SET time_spent_seconds = time_spent_seconds + ?,
+                                 record_session_seconds = MAX(record_session_seconds, ?)
+                             WHERE task_id = ?",
+                            duration,
+                            duration,
+                            task_id
+                        )
+                        .execute(&data.db)
+                        .await?;
+                    }
+                }
+            }
+
             if is_in_tracked_channel {
                 if let Entry::Vacant(e) = sessions.entry((user_id as u64, guild_id as u64)) {
                     // Fetch pending tasks and find the last selected task
@@ -149,35 +180,6 @@ pub async fn handle_event(
                             tokio::time::sleep(std::time::Duration::from_secs(120)).await;
                             let _ = message.delete(&http).await;
                         });
-                    }
-                }
-            } else if let Some(session) = sessions.remove(&(user_id as u64, guild_id as u64)) {
-                let duration = now - session.start_time;
-                if duration > 0 {
-                    sqlx::query!(
-                        "INSERT INTO voice_stats (user_id, guild_id, total_seconds) 
-                         VALUES (?, ?, ?) ON CONFLICT(user_id, guild_id) 
-                         DO UPDATE SET total_seconds = total_seconds + ?",
-                        user_id,
-                        guild_id,
-                        duration,
-                        duration
-                    )
-                    .execute(&data.db)
-                    .await?;
-
-                    if let Some(task_id) = session.active_task_id {
-                        sqlx::query!(
-                            "UPDATE user_tasks 
-                             SET time_spent_seconds = time_spent_seconds + ?,
-                                 record_session_seconds = MAX(record_session_seconds, ?)
-                             WHERE task_id = ?",
-                            duration,
-                            duration,
-                            task_id
-                        )
-                        .execute(&data.db)
-                        .await?;
                     }
                 }
             }
