@@ -72,7 +72,7 @@ async fn perform_guild_reset(
                 minutes
             ));
             if total_seconds > record.personal_record {
-                message.push_str("- New personal record!\n");
+                message.push_str(" - New personal record!\n");
             } else {
                 message.push('\n');
             }
