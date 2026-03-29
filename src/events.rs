@@ -3,12 +3,117 @@ use crate::state::{Data, Error, SessionData};
 use poise::serenity_prelude as serenity;
 use std::collections::hash_map::Entry;
 
+async fn acknowledge_setup_step(
+    ctx: &serenity::Context,
+    component: &serenity::ComponentInteraction,
+    message: &str,
+) -> Result<(), Error> {
+    component
+        .create_response(
+            ctx,
+            serenity::CreateInteractionResponse::Message(
+                serenity::CreateInteractionResponseMessage::new()
+                    .content(message)
+                    .ephemeral(true),
+            ),
+        )
+        .await?;
+    Ok(())
+}
+
 pub async fn handle_event(
     ctx: &serenity::Context,
     event: &serenity::FullEvent,
     data: &Data,
 ) -> Result<(), Error> {
     match event {
+        serenity::FullEvent::GuildCreate { guild, is_new } => {
+            // is_new ensures this only fires when invited, not every time your bot restarts
+            if Some(true) == *is_new {
+                // Try to use the server's system channel, fallback to the first available channel
+                let target_channel = guild.system_channel_id.unwrap_or_else(|| {
+                    *guild
+                        .channels
+                        .keys()
+                        .next()
+                        .unwrap_or(&serenity::ChannelId::new(1))
+                });
+
+                if target_channel.get() > 1 {
+                    let tracked_channels_menu = serenity::CreateSelectMenu::new(
+                        "setup_tracked_channels",
+                        serenity::CreateSelectMenuKind::Channel {
+                            channel_types: Some(vec![serenity::ChannelType::Voice]),
+                            default_channels: None,
+                        },
+                    )
+                    .placeholder("Select voice channels to track")
+                    .min_values(1)
+                    .max_values(25);
+
+                    let announcement_menu = serenity::CreateSelectMenu::new(
+                        "setup_announcement_channel",
+                        serenity::CreateSelectMenuKind::Channel {
+                            channel_types: Some(vec![serenity::ChannelType::Text]),
+                            default_channels: None,
+                        },
+                    )
+                    .placeholder("Select Announcement Channel")
+                    .max_values(1);
+
+                    let changelog_menu = serenity::CreateSelectMenu::new(
+                        "setup_changelog_channel",
+                        serenity::CreateSelectMenuKind::Channel {
+                            channel_types: Some(vec![serenity::ChannelType::Text]),
+                            default_channels: None,
+                        },
+                    )
+                    .placeholder("Select Changelog Channel (Optional)")
+                    .max_values(1);
+
+                    let reset_day_menu = serenity::CreateSelectMenu::new(
+                        "setup_reset_day",
+                        serenity::CreateSelectMenuKind::String {
+                            options: vec![
+                                serenity::CreateSelectMenuOption::new("Monday", "0"),
+                                serenity::CreateSelectMenuOption::new("Tuesday", "1"),
+                                serenity::CreateSelectMenuOption::new("Wednesday", "2"),
+                                serenity::CreateSelectMenuOption::new("Thursday", "3"),
+                                serenity::CreateSelectMenuOption::new("Friday", "4"),
+                                serenity::CreateSelectMenuOption::new("Saturday", "5"),
+                                serenity::CreateSelectMenuOption::new("Sunday", "6"),
+                            ],
+                        },
+                    )
+                    .placeholder("Select Weekly Reset Day");
+
+                    let finish_button = serenity::CreateButton::new("setup_finish")
+                        .label("Finish Setup")
+                        .style(serenity::ButtonStyle::Success);
+
+                    let components = vec![
+                        serenity::CreateActionRow::SelectMenu(tracked_channels_menu),
+                        serenity::CreateActionRow::SelectMenu(announcement_menu),
+                        serenity::CreateActionRow::SelectMenu(changelog_menu),
+                        serenity::CreateActionRow::SelectMenu(reset_day_menu),
+                        serenity::CreateActionRow::Buttons(vec![finish_button]),
+                    ];
+
+                    let embed = serenity::CreateEmbed::new()
+                .title("⚙️ Setup the VC StatsMaster bot")
+                .description("Please configure the bot using the menus below. You can change these settings later via commands.");
+
+                    let _ = target_channel
+                        .send_message(
+                            ctx,
+                            serenity::CreateMessage::new()
+                                .embed(embed)
+                                .components(components),
+                        )
+                        .await;
+                }
+            }
+        }
         serenity::FullEvent::GuildDelete { incomplete, .. } => {
             if !incomplete.unavailable {
                 let guild_id = incomplete.id.get() as i64;
@@ -204,12 +309,118 @@ pub async fn handle_event(
         }
         serenity::FullEvent::InteractionCreate {
             interaction: serenity::Interaction::Component(component),
-        } => {
+        } => 'interaction: {
             let user_id = component.user.id.get() as i64;
             let Some(guild_id_nonzero) = component.guild_id else {
                 return Ok(());
             };
             let guild_id = guild_id_nonzero.get() as i64;
+
+            match component.data.custom_id.as_str() {
+                "setup_tracked_channels" => {
+                    if let serenity::ComponentInteractionDataKind::ChannelSelect { values } =
+                        &component.data.kind
+                    {
+                        // Wipe existing tracks and insert the new selections
+                        sqlx::query!("DELETE FROM tracked_channels WHERE guild_id = ?", guild_id)
+                            .execute(&data.db)
+                            .await?;
+
+                        for channel_id in values {
+                            let cid = channel_id.get() as i64;
+                            sqlx::query!(
+                                "INSERT INTO tracked_channels (channel_id, guild_id) VALUES (?, ?)",
+                                cid,
+                                guild_id
+                            )
+                            .execute(&data.db)
+                            .await?;
+                        }
+
+                        acknowledge_setup_step(ctx, component, "Tracked channels updated!").await?;
+                        break 'interaction;
+                    }
+                }
+                "setup_announcement_channel" => {
+                    if let serenity::ComponentInteractionDataKind::ChannelSelect { values } =
+                        &component.data.kind
+                    {
+                        if let Some(channel_id) = values.first() {
+                            let cid = channel_id.get() as i64;
+                            // Upsert settings row
+                            sqlx::query!(
+                                "INSERT INTO guild_settings (guild_id, announcement_channel_id) 
+                             VALUES (?, ?) 
+                             ON CONFLICT(guild_id) DO UPDATE SET announcement_channel_id = ?",
+                                guild_id,
+                                cid,
+                                cid
+                            )
+                            .execute(&data.db)
+                            .await?;
+
+                            acknowledge_setup_step(ctx, component, "Announcement channel saved!")
+                                .await?;
+                            break 'interaction;
+                        }
+                    }
+                }
+                "setup_changelog_channel" => {
+                    if let serenity::ComponentInteractionDataKind::ChannelSelect { values } =
+                        &component.data.kind
+                    {
+                        if let Some(channel_id) = values.first() {
+                            let cid = channel_id.get() as i64;
+                            sqlx::query!(
+                            "INSERT INTO guild_settings (guild_id, announcement_channel_id, changelog_channel_id) 
+                             VALUES (?, 0, ?) 
+                             ON CONFLICT(guild_id) DO UPDATE SET changelog_channel_id = ?",
+                            guild_id, cid, cid
+                        )
+                        .execute(&data.db).await?;
+
+                            acknowledge_setup_step(ctx, component, "Changelog channel saved!")
+                                .await?;
+                            break 'interaction;
+                        }
+                    }
+                }
+                "setup_reset_day" => {
+                    if let serenity::ComponentInteractionDataKind::StringSelect { values } =
+                        &component.data.kind
+                    {
+                        if let Some(day_str) = values.first() {
+                            let day: i64 = day_str.parse().unwrap_or(0);
+                            sqlx::query!(
+                            "INSERT INTO guild_settings (guild_id, announcement_channel_id, reset_day) 
+                             VALUES (?, 0, ?) 
+                             ON CONFLICT(guild_id) DO UPDATE SET reset_day = ?",
+                            guild_id, day, day
+                        )
+                        .execute(&data.db).await?;
+
+                            acknowledge_setup_step(ctx, component, "Weekly reset day saved!")
+                                .await?;
+                            break 'interaction;
+                        }
+                    }
+                }
+                "setup_finish" => {
+                    component
+                        .create_response(
+                            ctx,
+                            serenity::CreateInteractionResponse::UpdateMessage(
+                                serenity::CreateInteractionResponseMessage::new()
+                                    .content("✅ Setup complete! VC StatsMaster is ready.")
+                                    .embeds(vec![])
+                                    .components(vec![]), // Removes the dashboard
+                            ),
+                        )
+                        .await?;
+                    break 'interaction;
+                }
+                _ => {}
+            }
 
             if component.data.custom_id.starts_with("task_select_") {
                 let extracted_id = component.data.custom_id.replace("task_select_", "");

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM tracked_channels WHERE guild_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "bd20e8cb2d933d6dd3fee4db3aa9d0ce68e7bc3c3cc591a04432733e760ed406"
+}
