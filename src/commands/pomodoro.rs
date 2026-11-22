@@ -91,7 +91,7 @@ pub async fn pomodoro(
     reply(
         ctx,
         format!(
-            "🍅 Pomodoro started: {work} min work, {pause} min pause, {rounds} rounds. Leave or switch channels to stop."
+            "🍅 Pomodoro started: {work} min work, {pause} min pause, {rounds} rounds. Use ⏸ on the timer to pause; leave or switch channels to stop."
         ),
     )
     .await

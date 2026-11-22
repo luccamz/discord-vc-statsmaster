@@ -1,4 +1,5 @@
 use crate::commands::tasks::{build_todo_components, format_duration, truncate};
+use crate::pomodoro::{self, Control};
 use crate::state::{Data, Error, SessionData};
 use poise::serenity_prelude as serenity;
 use std::collections::HashMap;
@@ -453,7 +454,46 @@ pub async fn handle_event(
                 _ => {}
             }
 
-            if component.data.custom_id.starts_with("task_select_") {
+            if let Some(rest) = component.data.custom_id.strip_prefix("pomo_") {
+                let parts: Vec<&str> = rest.split('_').collect();
+                let [action, owner, id, round] = parts[..] else {
+                    return Ok(());
+                };
+                let (Ok(owner), Ok(id), Ok(round)) = (
+                    owner.parse::<i64>(),
+                    id.parse::<u64>(),
+                    round.parse::<u32>(),
+                ) else {
+                    return Ok(());
+                };
+                let msg = match action {
+                    "pause" => Control::Pause(round),
+                    "resume" => Control::Resume(round),
+                    _ => return Ok(()),
+                };
+
+                let reply = |content: &str| {
+                    serenity::CreateInteractionResponse::Message(
+                        serenity::CreateInteractionResponseMessage::new()
+                            .content(content)
+                            .ephemeral(true),
+                    )
+                };
+                // The task replaces the message itself, so a valid press only needs an ack.
+                let response = if owner != user_id {
+                    reply("Nuh huh, can't touch it!")
+                } else if pomodoro::control(
+                    &data.pomodoros,
+                    (user_id as u64, guild_id as u64),
+                    id,
+                    msg,
+                ) {
+                    serenity::CreateInteractionResponse::Acknowledge
+                } else {
+                    reply("This pomodoro has ended.")
+                };
+                component.create_response(ctx, response).await?;
+            } else if component.data.custom_id.starts_with("task_select_") {
                 let extracted_id = component.data.custom_id.replace("task_select_", "");
                 if extracted_id != user_id.to_string() {
                     component

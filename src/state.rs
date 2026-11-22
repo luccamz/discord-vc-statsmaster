@@ -1,7 +1,7 @@
 use poise::serenity_prelude::{ChannelId, MessageId};
 use sqlx::SqlitePool;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
 
 #[derive(Clone, Copy)]
 pub struct SessionData {
@@ -16,7 +16,7 @@ pub struct Pomodoro {
     pub id: u64,
     pub allowed: [Option<ChannelId>; 2],
     pub status_msg: Option<(ChannelId, MessageId)>,
-    pub cancel: Arc<Notify>,
+    pub control: tokio::sync::mpsc::UnboundedSender<crate::pomodoro::Control>,
 }
 
 pub type Pomodoros = Arc<std::sync::Mutex<HashMap<(u64, u64), Pomodoro>>>;
