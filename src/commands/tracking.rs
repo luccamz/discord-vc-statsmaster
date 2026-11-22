@@ -186,7 +186,12 @@ pub async fn toggle_tracking(
     .fetch_optional(&ctx.data().db)
     .await?;
 
-    if existing.is_some() {
+    if existing.is_none()
+        && crate::commands::config::pomodoro_lobby(&ctx.data().db, guild_id).await?
+            == Some(channel_id)
+    {
+        ctx.say("The pomodoro lobby cannot be tracked.").await?;
+    } else if existing.is_some() {
         sqlx::query!(
             "DELETE FROM tracked_channels WHERE channel_id = ?",
             channel_id

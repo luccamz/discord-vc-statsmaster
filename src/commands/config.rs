@@ -170,3 +170,13 @@ pub async fn config_pomodoro_lobby(
 
     Ok(())
 }
+
+pub async fn pomodoro_lobby(db: &sqlx::SqlitePool, guild_id: i64) -> Result<Option<i64>, Error> {
+    Ok(sqlx::query!(
+        "SELECT pomodoro_lobby_channel_id FROM guild_settings WHERE guild_id = ?",
+        guild_id
+    )
+    .fetch_optional(db)
+    .await?
+    .and_then(|row| row.pomodoro_lobby_channel_id))
+}

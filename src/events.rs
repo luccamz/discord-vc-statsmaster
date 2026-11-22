@@ -328,6 +328,18 @@ pub async fn handle_event(
                     if let serenity::ComponentInteractionDataKind::ChannelSelect { values } =
                         &component.data.kind
                     {
+                        let lobby =
+                            crate::commands::config::pomodoro_lobby(&data.db, guild_id).await?;
+                        if values.iter().any(|c| Some(c.get() as i64) == lobby) {
+                            acknowledge_setup_step(
+                                ctx,
+                                component,
+                                "The pomodoro lobby cannot be tracked. Pick other channels.",
+                            )
+                            .await?;
+                            break 'interaction;
+                        }
+
                         // Wipe existing tracks and insert the new selections
                         sqlx::query!("DELETE FROM tracked_channels WHERE guild_id = ?", guild_id)
                             .execute(&data.db)

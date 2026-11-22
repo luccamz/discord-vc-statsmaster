@@ -54,15 +54,9 @@ pub async fn pomodoro(
         return reply(ctx, "Pomodoro mode only works in tracked voice channels.").await;
     }
 
-    let guild_id = guild.get() as i64;
-    let lobby = sqlx::query!(
-        "SELECT pomodoro_lobby_channel_id FROM guild_settings WHERE guild_id = ?",
-        guild_id
-    )
-    .fetch_optional(&ctx.data().db)
-    .await?
-    .and_then(|row| row.pomodoro_lobby_channel_id)
-    .map(|id| serenity::ChannelId::new(id as u64));
+    let lobby = crate::commands::config::pomodoro_lobby(&ctx.data().db, guild.get() as i64)
+        .await?
+        .map(|id| serenity::ChannelId::new(id as u64));
 
     let Some(lobby) = lobby else {
         return reply(
