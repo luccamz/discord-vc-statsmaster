@@ -1,5 +1,4 @@
 use crate::state::{Context, Error};
-use chrono::TimeZone;
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
 
@@ -311,10 +310,11 @@ pub async fn edit_deadline(
     Ok(())
 }
 
-pub async fn build_todo_components(
+/// Builds the todo embed and its toggle buttons; the buttons are empty when there are no tasks.
+pub async fn build_todo(
     db: &SqlitePool,
     user_id: i64,
-) -> Result<Vec<serenity::CreateActionRow>, Error> {
+) -> Result<(serenity::CreateEmbed, Vec<serenity::CreateActionRow>), Error> {
     let tasks = sqlx::query!(
         "SELECT task_id, description, completed_at, terminated_at, time_spent_seconds, deadline 
          FROM user_tasks 
@@ -334,81 +334,68 @@ pub async fn build_todo_components(
     .await?;
 
     let mut rows = Vec::new();
-    let now = chrono::Utc::now();
+    let mut lines: Vec<String> = Vec::new();
+    let mut section = "";
 
     for chunk in tasks.chunks(5) {
         let mut buttons = Vec::new();
         for task in chunk {
-            let hours = task.time_spent_seconds / 3600;
-            let minutes = (task.time_spent_seconds % 3600) / 60;
-            let time_str = format!("({}h {}m)", hours, minutes);
+            let (header, icon, prefix, style) = if task.terminated_at.is_some() {
+                ("**Expired**", "⛔", "[-]", serenity::ButtonStyle::Danger)
+            } else if task.completed_at.is_some() {
+                ("**Done**", "✅", "[x]", serenity::ButtonStyle::Success)
+            } else {
+                ("**Pending**", "⬜", "[ ]", serenity::ButtonStyle::Secondary)
+            };
 
-            let deadline_str = match task.deadline {
-                Some(ts) => {
-                    let dt = chrono::Utc.timestamp_opt(ts, 0).unwrap();
-                    let diff = dt - now;
-
-                    if diff.num_seconds() < 0 {
-                        " [Overdue]".to_string()
-                    } else if diff.num_days() > 0 {
-                        format!(" [{}d left]", diff.num_days())
-                    } else if diff.num_hours() > 0 {
-                        format!(" [{}h left]", diff.num_hours())
-                    } else if diff.num_minutes() > 0 {
-                        format!(" [{}m left]", diff.num_minutes())
-                    } else {
-                        " [<1m left]".to_string()
-                    }
+            if header != section {
+                if !lines.is_empty() {
+                    lines.push(String::new());
                 }
-                None => String::new(),
-            };
+                lines.push(header.to_string());
+                section = header;
+            }
+            let time = format_duration(task.time_spent_seconds);
+            let mut line = format!("{icon} {} · {time}", truncate(&task.description, 80));
+            if let (Some(deadline), None) = (task.deadline, task.completed_at) {
+                line.push_str(&format!(" · due <t:{deadline}:R>"));
+            }
+            lines.push(line);
 
-            let prefix = if task.terminated_at.is_some() {
-                "[-]"
-            } else if task.completed_at.is_some() {
-                "[x]"
-            } else {
-                "[ ]"
-            };
+            // Deadlines live in the embed, where Discord keeps the relative time current.
+            let time_str = format!(" ({time})");
+            let max_desc_len = 80 - prefix.len() - 1 - time_str.chars().count();
+            let label = format!(
+                "{prefix} {}{time_str}",
+                truncate(&task.description, max_desc_len)
+            );
 
-            let style = if task.terminated_at.is_some() {
-                serenity::ButtonStyle::Danger
-            } else if task.completed_at.is_some() {
-                serenity::ButtonStyle::Success
-            } else {
-                serenity::ButtonStyle::Secondary
-            };
-
-            let max_desc_len = 80 - prefix.len() - time_str.len() - deadline_str.len() - 3;
-            let safe_desc = truncate(&task.description, max_desc_len);
-
-            let label = format!("{} {}{}{}", prefix, safe_desc, deadline_str, time_str);
-
-            let mut button = serenity::CreateButton::new(format!(
+            let button = serenity::CreateButton::new(format!(
                 "task_toggle_{}_{}",
                 task.task_id.unwrap(),
                 user_id
             ))
             .label(label)
-            .style(style);
-
-            if task.terminated_at.is_some() {
-                button = button.disabled(true);
-            }
+            .style(style)
+            .disabled(task.terminated_at.is_some());
 
             buttons.push(button);
         }
         rows.push(serenity::CreateActionRow::Buttons(buttons));
     }
 
-    Ok(rows)
+    let embed = serenity::CreateEmbed::new()
+        .title("📝 Todo")
+        .description(lines.join("\n"))
+        .color(0x3498DB);
+    Ok((embed, rows))
 }
 
 /// Views and manages your interactive todo list.
 #[poise::command(slash_command, guild_only)]
 pub async fn todo(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get() as i64;
-    let components = build_todo_components(&ctx.data().db, user_id).await?;
+    let (embed, components) = build_todo(&ctx.data().db, user_id).await?;
 
     if components.is_empty() {
         crate::commands::reply_private(
@@ -423,6 +410,7 @@ pub async fn todo(ctx: Context<'_>) -> Result<(), Error> {
         .content(
             "Here is your interactive todo list. Click a task to toggle its completion status.",
         )
+        .embed(embed)
         .components(components)
         .ephemeral(true);
 

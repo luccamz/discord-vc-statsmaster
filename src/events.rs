@@ -1,4 +1,4 @@
-use crate::commands::tasks::{build_todo_components, format_duration, truncate};
+use crate::commands::tasks::{build_todo, format_duration, truncate};
 use crate::pomodoro::{self, Control};
 use crate::state::{Data, Error, SessionData};
 use poise::serenity_prelude as serenity;
@@ -603,13 +603,14 @@ pub async fn handle_event(
                     .execute(&data.db)
                     .await?;
 
-                    let new_components = build_todo_components(&data.db, user_id).await?;
+                    let (embed, new_components) = build_todo(&data.db, user_id).await?;
 
                     component
                         .create_response(
                             ctx,
                             serenity::CreateInteractionResponse::UpdateMessage(
                                 serenity::CreateInteractionResponseMessage::new()
+                                    .embed(embed)
                                     .components(new_components),
                             ),
                         )
