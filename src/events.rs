@@ -149,6 +149,7 @@ pub async fn handle_event(
             let guild_id = guild_id_nonzero.get() as i64;
 
             crate::pomodoro::on_voice_update(
+                &ctx.http,
                 &data.pomodoros,
                 (user_id as u64, guild_id as u64),
                 new.channel_id,

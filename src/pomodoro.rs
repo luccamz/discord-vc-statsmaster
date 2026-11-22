@@ -1,9 +1,10 @@
 use crate::state::{Pomodoro, Pomodoros};
-use poise::serenity_prelude::{ChannelId, GuildId, Http, UserId};
+use poise::serenity_prelude::{self as serenity, ChannelId, GuildId, Http, UserId};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, MutexGuard};
 use std::time::Duration;
+use tokio::sync::Notify;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -46,73 +47,183 @@ impl Config {
             Phase::Pause => self.lobby,
         }
     }
+
+    fn duration(&self, phase: Phase) -> Duration {
+        match phase {
+            Phase::Work => self.work,
+            Phase::Pause => self.pause,
+        }
+    }
 }
 
 fn lock(pomodoros: &Pomodoros) -> MutexGuard<'_, HashMap<(u64, u64), Pomodoro>> {
     pomodoros.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Signals the task and cleans up what it left visible. The entry must already be removed.
+fn stop(http: &Arc<Http>, user: UserId, p: Pomodoro, dm: Option<String>) {
+    p.cancel.notify_one();
+    let http = http.clone();
+    tokio::spawn(async move {
+        if let Some((channel, msg)) = p.status_msg {
+            let _ = channel.delete_message(&*http, msg).await;
+        }
+        if let Some(dm) = dm {
+            let _ = user
+                .direct_message(&*http, serenity::CreateMessage::new().content(dm))
+                .await;
+        }
+    });
+}
+
 /// Starts a pomodoro for the user, replacing any running one.
 pub fn start(cfg: Config) {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let key = cfg.key();
+    let (key, http, user) = (cfg.key(), cfg.http.clone(), cfg.user);
     let pomodoros = cfg.pomodoros.clone();
-    let allowed = [Some(cfg.work_channel), None];
+    let entry = Pomodoro {
+        id,
+        allowed: [Some(cfg.work_channel), None],
+        status_msg: None,
+        cancel: Arc::new(Notify::new()),
+    };
+    let cancel = entry.cancel.clone();
 
-    // Spawn under the lock so the task cannot observe the map before its entry exists.
-    let mut map = lock(&pomodoros);
-    let task = tokio::spawn(run(cfg, id));
-    if let Some(old) = map.insert(key, Pomodoro { id, allowed, task }) {
-        old.task.abort();
+    let old = lock(&pomodoros).insert(key, entry);
+    if let Some(old) = old {
+        stop(&http, user, old, None);
     }
+    tokio::spawn(run(cfg, id, cancel));
 }
 
 /// Cancels the user's pomodoro if they left the channel it expects them in.
-pub fn on_voice_update(pomodoros: &Pomodoros, key: (u64, u64), new: Option<ChannelId>) {
-    let mut map = lock(pomodoros);
-    if map
-        .get(&key)
-        .is_some_and(|p| should_cancel(&p.allowed, new))
-    {
-        if let Some(p) = map.remove(&key) {
-            p.task.abort();
+pub fn on_voice_update(
+    http: &Arc<Http>,
+    pomodoros: &Pomodoros,
+    key: (u64, u64),
+    new: Option<ChannelId>,
+) {
+    let removed = {
+        let mut map = lock(pomodoros);
+        match map.get(&key) {
+            Some(p) if should_cancel(&p.allowed, new) => map.remove(&key),
+            _ => None,
         }
+    };
+    if let Some(p) = removed {
+        let dm = "⏹️ Pomodoro cancelled because you left the channel.";
+        stop(http, UserId::new(key.0), p, Some(dm.into()));
     }
 }
 
 /// Returns false if this run was cancelled or replaced.
-fn set_allowed(cfg: &Config, id: u64, allowed: [Option<ChannelId>; 2]) -> bool {
+fn update_own(cfg: &Config, id: u64, f: impl FnOnce(&mut Pomodoro)) -> bool {
     match lock(&cfg.pomodoros).get_mut(&cfg.key()) {
         Some(p) if p.id == id => {
-            p.allowed = allowed;
+            f(p);
             true
         }
         _ => false,
     }
 }
 
-fn remove_own(cfg: &Config, id: u64) -> bool {
+fn remove_own(cfg: &Config, id: u64) -> Option<Pomodoro> {
     let mut map = lock(&cfg.pomodoros);
     if map.get(&cfg.key()).is_some_and(|p| p.id == id) {
-        map.remove(&cfg.key());
-        true
+        map.remove(&cfg.key())
     } else {
-        false
+        None
     }
 }
 
-async fn run(cfg: Config, id: u64) {
+/// Posts the phase status in the VC chat and DMs the user. Returns false if cancelled.
+async fn announce(cfg: &Config, id: u64, phase: Phase, round: u32, last: bool) -> bool {
+    let ends = chrono::Utc::now().timestamp() + cfg.duration(phase).as_secs() as i64;
+    let rounds = cfg.reps.map_or("∞".to_string(), |r| r.to_string());
+    let (title, color, desc, dm) = match phase {
+        Phase::Work => {
+            let (next, dm_next) = if last {
+                ("done", "Ends")
+            } else {
+                ("break", "Break")
+            };
+            (
+                format!("🍅 Focus · round {round}/{rounds}"),
+                0xE74C3C,
+                format!("<@{}> · {next} <t:{ends}:R>", cfg.user),
+                format!(
+                    "🍅 Round {round}/{rounds} started in <#{}>. {dm_next} <t:{ends}:R>.",
+                    cfg.work_channel
+                ),
+            )
+        }
+        Phase::Pause => (
+            "☕ Break".to_string(),
+            0x2ECC71,
+            format!("<@{}> · back to work <t:{ends}:R>", cfg.user),
+            format!(
+                "☕ Break time. Back to <#{}> <t:{ends}:R>.",
+                cfg.work_channel
+            ),
+        ),
+    };
+
+    let embed = serenity::CreateEmbed::new()
+        .title(title)
+        .description(desc)
+        .color(color);
+    let sent = cfg
+        .channel(phase)
+        .send_message(&*cfg.http, serenity::CreateMessage::new().embed(embed))
+        .await
+        .ok()
+        .map(|m| (m.channel_id, m.id));
+
+    let mut previous = None;
+    let alive = update_own(cfg, id, |p| {
+        previous = std::mem::replace(&mut p.status_msg, sent)
+    });
+    if !alive {
+        previous = sent;
+    }
+    if let Some((channel, msg)) = previous {
+        let _ = channel.delete_message(&*cfg.http, msg).await;
+    }
+    if alive {
+        let _ = cfg
+            .user
+            .direct_message(&*cfg.http, serenity::CreateMessage::new().content(dm))
+            .await;
+    }
+    alive
+}
+
+fn finish(cfg: &Config, id: u64, dm: String) -> bool {
+    let Some(p) = remove_own(cfg, id) else {
+        return false;
+    };
+    stop(&cfg.http, cfg.user, p, Some(dm));
+    true
+}
+
+async fn run(cfg: Config, id: u64, cancel: Arc<Notify>) {
     let mut phases = phase_sequence(cfg.reps).peekable();
+    let mut round = 0;
     while let Some(phase) = phases.next() {
-        let duration = match phase {
-            Phase::Work => cfg.work,
-            Phase::Pause => cfg.pause,
-        };
-        tokio::time::sleep(duration).await;
+        if phase == Phase::Work {
+            round += 1;
+        }
+        if !announce(&cfg, id, phase, round, phases.peek().is_none()).await {
+            return;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(cfg.duration(phase)) => {}
+            _ = cancel.notified() => return,
+        }
 
         let Some(&next) = phases.peek() else { break };
         let (from, to) = (cfg.channel(phase), cfg.channel(next));
-        if !set_allowed(&cfg, id, [Some(from), Some(to)]) {
+        if !update_own(&cfg, id, |p| p.allowed = [Some(from), Some(to)]) {
             return;
         }
         if cfg
@@ -121,16 +232,20 @@ async fn run(cfg: Config, id: u64) {
             .await
             .is_err()
         {
-            remove_own(&cfg, id);
+            finish(
+                &cfg,
+                id,
+                format!("⚠️ Pomodoro stopped: I could not move you to <#{to}>."),
+            );
             return;
         }
-        if !set_allowed(&cfg, id, [Some(to), None]) {
+        if !update_own(&cfg, id, |p| p.allowed = [Some(to), None]) {
             return;
         }
     }
 
     // Remove first so the disconnect's voice update finds no entry to cancel.
-    if remove_own(&cfg, id) {
+    if finish(&cfg, id, "✅ Pomodoro complete. Nice work!".into()) {
         let _ = cfg.guild.disconnect_member(&*cfg.http, cfg.user).await;
     }
 }
