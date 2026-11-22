@@ -1,4 +1,4 @@
-use crate::commands::tasks::{build_todo_components, truncate};
+use crate::commands::tasks::{build_todo_components, format_duration, truncate};
 use crate::state::{Data, Error, SessionData};
 use poise::serenity_prelude as serenity;
 use std::collections::HashMap;
@@ -19,6 +19,65 @@ async fn acknowledge_setup_step(
         )
         .await?;
     Ok(())
+}
+
+struct PromptTask {
+    id: i64,
+    description: String,
+    seconds: i64,
+    last_selected: bool,
+}
+
+async fn pending_tasks(db: &sqlx::SqlitePool, user_id: i64) -> Result<Vec<PromptTask>, Error> {
+    Ok(sqlx::query!(
+        "SELECT task_id, description, is_last_selected, time_spent_seconds 
+         FROM user_tasks 
+         WHERE user_id = ? AND completed_at IS NULL AND terminated_at IS NULL",
+        user_id
+    )
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .filter_map(|t| {
+        Some(PromptTask {
+            id: t.task_id?,
+            description: t.description,
+            seconds: t.time_spent_seconds,
+            last_selected: t.is_last_selected,
+        })
+    })
+    .collect())
+}
+
+/// Builds the "Currently working on" text and its task dropdown.
+fn task_prompt(
+    user_id: i64,
+    tasks: &[PromptTask],
+    selected: Option<i64>,
+) -> (String, serenity::CreateSelectMenu) {
+    let current = tasks
+        .iter()
+        .find(|t| Some(t.id) == selected)
+        .map_or("Nothing in particular", |t| t.description.as_str());
+
+    let mut options = vec![
+        serenity::CreateSelectMenuOption::new("Nothing in particular", "none")
+            .default_selection(selected.is_none()),
+    ];
+    options.extend(tasks.iter().take(24).map(|t| {
+        serenity::CreateSelectMenuOption::new(truncate(&t.description, 100), t.id.to_string())
+            .description(format!("{} spent", format_duration(t.seconds)))
+            .default_selection(Some(t.id) == selected)
+    }));
+
+    let menu = serenity::CreateSelectMenu::new(
+        format!("task_select_{}", user_id),
+        serenity::CreateSelectMenuKind::String { options },
+    );
+    (
+        format!("<@{user_id}> Currently working on.. {current}. Change status?"),
+        menu,
+    )
 }
 
 pub async fn handle_event(
@@ -189,24 +248,11 @@ pub async fn handle_event(
                 .is_some();
 
             let pending_tasks = if is_in_tracked_channel {
-                sqlx::query!(
-                    "SELECT task_id, description, is_last_selected 
-                     FROM user_tasks 
-                     WHERE user_id = ? 
-                       AND completed_at IS NULL 
-                       AND terminated_at IS NULL",
-                    user_id
-                )
-                .fetch_all(&data.db)
-                .await?
+                pending_tasks(&data.db, user_id).await?
             } else {
                 Vec::new()
             };
-            let initial_task = pending_tasks.iter().find(|t| t.is_last_selected);
-            let initial_task_id = initial_task.and_then(|t| t.task_id);
-            let active_task_name = initial_task.map_or("Nothing in particular".to_string(), |t| {
-                t.description.clone()
-            });
+            let initial_task_id = pending_tasks.iter().find(|t| t.last_selected).map(|t| t.id);
 
             // Swap sessions under the lock; write to the database after releasing it.
             let old = {
@@ -235,37 +281,7 @@ pub async fn handle_event(
 
             // Prompt only when there is a task to choose from.
             if is_in_tracked_channel && !pending_tasks.is_empty() {
-                let prompt_content = format!(
-                    "<@{}> Currently working on.. {}. Change status?",
-                    user_id, active_task_name
-                );
-
-                let mut options = Vec::new();
-                let mut no_task_opt =
-                    serenity::CreateSelectMenuOption::new("Nothing in particular", "none");
-
-                if initial_task_id.is_none() {
-                    no_task_opt = no_task_opt.default_selection(true);
-                }
-                options.push(no_task_opt);
-
-                for task in pending_tasks {
-                    let mut opt = serenity::CreateSelectMenuOption::new(
-                        truncate(&task.description, 100),
-                        task.task_id.unwrap().to_string(),
-                    );
-                    if task.is_last_selected {
-                        opt = opt.default_selection(true);
-                    }
-                    options.push(opt);
-                }
-
-                options.truncate(25);
-
-                let menu = serenity::CreateSelectMenu::new(
-                    format!("task_select_{}", user_id),
-                    serenity::CreateSelectMenuKind::String { options },
-                );
+                let (prompt_content, menu) = task_prompt(user_id, &pending_tasks, initial_task_id);
 
                 let channel = serenity::ChannelId::new(current_channel_id as u64);
                 if let Ok(message) = channel
@@ -486,66 +502,15 @@ pub async fn handle_event(
                 .execute(&data.db)
                 .await?;
 
-                let selected_desc = if let Some(task_id) = selected_task {
-                    let row = sqlx::query!(
-                        "SELECT description FROM user_tasks WHERE task_id = ?",
-                        task_id
-                    )
-                    .fetch_one(&data.db)
-                    .await?;
-                    row.description
-                } else {
-                    "Nothing in particular".to_string()
-                };
-
-                // Re-fetch pending tasks to build the updated dropdown
-                let pending_tasks = sqlx::query!(
-                    "SELECT task_id, description 
-                     FROM user_tasks 
-                     WHERE user_id = ? 
-                       AND completed_at IS NULL 
-                       AND terminated_at IS NULL",
-                    user_id
-                )
-                .fetch_all(&data.db)
-                .await?;
-
-                let mut options = Vec::new();
-                let mut no_task_opt =
-                    serenity::CreateSelectMenuOption::new("Nothing in particular", "none");
-
-                if selected_value == "none" {
-                    no_task_opt = no_task_opt.default_selection(true);
-                }
-                options.push(no_task_opt);
-
-                for task in pending_tasks {
-                    let mut opt = serenity::CreateSelectMenuOption::new(
-                        truncate(&task.description, 100),
-                        task.task_id.unwrap().to_string(),
-                    );
-                    if task.task_id.unwrap().to_string() == *selected_value {
-                        opt = opt.default_selection(true);
-                    }
-                    options.push(opt);
-                }
-
-                options.truncate(25);
-
-                let updated_menu = serenity::CreateSelectMenu::new(
-                    format!("task_select_{}", user_id),
-                    serenity::CreateSelectMenuKind::String { options },
-                );
+                let tasks = pending_tasks(&data.db, user_id).await?;
+                let (content, updated_menu) = task_prompt(user_id, &tasks, selected_task);
 
                 component
                     .create_response(
                         ctx,
                         serenity::CreateInteractionResponse::UpdateMessage(
                             serenity::CreateInteractionResponseMessage::new()
-                                .content(format!(
-                                    "<@{}> Currently working on.. {}. Change status?",
-                                    user_id, selected_desc
-                                ))
+                                .content(content)
                                 .components(vec![serenity::CreateActionRow::SelectMenu(
                                     updated_menu,
                                 )]), // Send the new menu

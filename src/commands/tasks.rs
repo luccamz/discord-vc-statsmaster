@@ -3,6 +3,10 @@ use chrono::TimeZone;
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
 
+pub fn format_duration(seconds: i64) -> String {
+    format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
+}
+
 /// Shortens `s` to at most `max` characters, ending with "..." when cut.
 pub fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
