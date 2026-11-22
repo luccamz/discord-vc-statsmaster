@@ -163,6 +163,7 @@ pub async fn flush_on_shutdown(
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .drain()
+        .map(|(_, prompt)| prompt)
         .collect();
     let timers = crate::pomodoro::drain_status_messages(&pomodoros);
     let cleanup = async {

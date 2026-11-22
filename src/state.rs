@@ -1,9 +1,6 @@
 use poise::serenity_prelude::{ChannelId, MessageId};
 use sqlx::SqlitePool;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 #[derive(Clone, Copy)]
@@ -24,8 +21,8 @@ pub struct Pomodoro {
 
 pub type Pomodoros = Arc<std::sync::Mutex<HashMap<(u64, u64), Pomodoro>>>;
 
-/// Task prompts still on screen, so a shutdown can delete them.
-pub type Prompts = Arc<std::sync::Mutex<HashSet<(ChannelId, MessageId)>>>;
+/// Each user's task prompt still on screen, keyed like sessions, so it can be deleted later.
+pub type Prompts = Arc<std::sync::Mutex<HashMap<(u64, u64), (ChannelId, MessageId)>>>;
 
 pub struct Data {
     pub db: SqlitePool,

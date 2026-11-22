@@ -26,12 +26,13 @@ async fn acknowledge_setup_step(
 async fn post_task_prompt(
     ctx: &serenity::Context,
     data: &Data,
-    user_id: i64,
+    key: (u64, u64),
     channel_id: i64,
     tasks: &[PromptTask],
     selected: Option<i64>,
     silent: bool,
 ) {
+    let user_id = key.0 as i64;
     let mut message = serenity::CreateMessage::new()
         .content(prompt_text(user_id, tasks, selected))
         .select_menu(task_menu(format!("task_select_{user_id}"), tasks, selected));
@@ -50,7 +51,7 @@ async fn post_task_prompt(
     prompts
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(prompt);
+        .insert(key, prompt);
 
     tokio::spawn(async move {
         use serenity::futures::StreamExt;
@@ -70,10 +71,10 @@ async fn post_task_prompt(
         let _ = tokio::time::timeout(std::time::Duration::from_secs(86400), collector.next()).await;
 
         let _ = message.delete(&http).await;
-        prompts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&prompt);
+        let mut prompts = prompts.lock().unwrap_or_else(|e| e.into_inner());
+        if prompts.get(&key) == Some(&prompt) {
+            prompts.remove(&key);
+        }
     });
 }
 
@@ -98,7 +99,7 @@ pub async fn handle_event(
                                 post_task_prompt(
                                     ctx,
                                     data,
-                                    user_id,
+                                    (user, guild.id.get()),
                                     channel as i64,
                                     &tasks,
                                     selected,
@@ -311,7 +312,7 @@ pub async fn handle_event(
                 post_task_prompt(
                     ctx,
                     data,
-                    user_id,
+                    key,
                     current_channel_id,
                     &pending_tasks,
                     initial_task_id,

@@ -84,5 +84,18 @@ pub async fn pomodoro(
             "🍅 Pomodoro started: {work} min work, {pause} min pause, {rounds} rounds. Use ⏸ on the timer to pause; leave or switch channels to stop."
         ),
     )
-    .await
+    .await?;
+
+    // The timer carries the task dropdown from now on, so the join prompt goes away.
+    let key = (user.get(), guild.get());
+    let prompt = ctx
+        .data()
+        .prompts
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&key);
+    if let Some((channel, msg)) = prompt {
+        let _ = channel.delete_message(ctx, msg).await;
+    }
+    Ok(())
 }
