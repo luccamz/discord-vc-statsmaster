@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT pomodoro_work, pomodoro_pause, pomodoro_reps, pomodoro_auto \n         FROM user_settings WHERE user_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "pomodoro_work",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "pomodoro_pause",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "pomodoro_reps",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "pomodoro_auto",
+        "ordinal": 3,
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5fda8c0b2ff9a917b0b4de74fd544887ae59d730d9cad02162ae728b94d3cb63"
+}

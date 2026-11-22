@@ -190,3 +190,67 @@ pub async fn pomodoro_lobby(db: &sqlx::SqlitePool, guild_id: i64) -> Result<Opti
     .await?
     .and_then(|row| row.pomodoro_lobby_channel_id))
 }
+
+#[derive(Debug, poise::ChoiceParameter)]
+pub enum ModeChoice {
+    #[name = "normal"]
+    Normal,
+    #[name = "pomodoro"]
+    Pomodoro,
+}
+
+/// Sets your pomodoro defaults. Options you leave out keep their current value.
+#[poise::command(slash_command, guild_only)]
+pub async fn config_pomodoro(
+    ctx: Context<'_>,
+    #[description = "Work cycle in minutes"]
+    #[min = 1]
+    #[max = 240]
+    work: Option<u32>,
+    #[description = "Pause cycle in minutes"]
+    #[min = 1]
+    #[max = 60]
+    pause: Option<u32>,
+    #[description = "Number of work cycles, 0 = until you leave"]
+    #[min = 0]
+    #[max = 100]
+    repetitions: Option<u32>,
+    #[description = "Mode when you join a tracked channel"] default_mode: Option<ModeChoice>,
+) -> Result<(), Error> {
+    use crate::commands::pomodoro::{endless_if_zero, pomodoro_defaults};
+
+    let user_id = ctx.author().id.get() as i64;
+    let current = pomodoro_defaults(&ctx.data().db, user_id).await?;
+    let work = work.unwrap_or(current.work) as i64;
+    let pause = pause.unwrap_or(current.pause) as i64;
+    let reps = repetitions.map_or(current.reps, endless_if_zero);
+    let reps_db = reps.unwrap_or(0) as i64;
+    let auto = default_mode.map_or(current.auto, |m| matches!(m, ModeChoice::Pomodoro));
+
+    sqlx::query!(
+        "INSERT INTO user_settings (user_id, pomodoro_work, pomodoro_pause, pomodoro_reps, pomodoro_auto) 
+         VALUES (?, ?, ?, ?, ?) 
+         ON CONFLICT(user_id) DO UPDATE SET 
+         pomodoro_work = excluded.pomodoro_work,
+         pomodoro_pause = excluded.pomodoro_pause,
+         pomodoro_reps = excluded.pomodoro_reps,
+         pomodoro_auto = excluded.pomodoro_auto",
+        user_id,
+        work,
+        pause,
+        reps_db,
+        auto
+    )
+    .execute(&ctx.data().db)
+    .await?;
+
+    let rounds = reps.map_or("∞".to_string(), |r| r.to_string());
+    let mode = if auto { "pomodoro" } else { "normal" };
+    crate::commands::reply_private(
+        ctx,
+        format!(
+            "🍅 Your pomodoro defaults: {work} min work, {pause} min pause, {rounds} rounds. Default mode: {mode}."
+        ),
+    )
+    .await
+}

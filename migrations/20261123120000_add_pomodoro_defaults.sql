@@ -1,0 +1,4 @@
+ALTER TABLE user_settings ADD COLUMN pomodoro_work INTEGER NOT NULL DEFAULT 25;
+ALTER TABLE user_settings ADD COLUMN pomodoro_pause INTEGER NOT NULL DEFAULT 5;
+ALTER TABLE user_settings ADD COLUMN pomodoro_reps INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE user_settings ADD COLUMN pomodoro_auto BOOLEAN NOT NULL DEFAULT 0;

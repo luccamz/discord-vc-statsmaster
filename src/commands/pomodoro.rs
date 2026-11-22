@@ -4,6 +4,45 @@ use crate::state::{Context, Error};
 use poise::serenity_prelude as serenity;
 use std::time::Duration;
 
+/// A user's pomodoro defaults; `reps` is `None` for an endless run.
+pub struct PomodoroDefaults {
+    pub work: u32,
+    pub pause: u32,
+    pub reps: Option<u32>,
+    pub auto: bool,
+}
+
+pub fn endless_if_zero(reps: u32) -> Option<u32> {
+    (reps > 0).then_some(reps)
+}
+
+pub async fn pomodoro_defaults(
+    db: &sqlx::SqlitePool,
+    user_id: i64,
+) -> Result<PomodoroDefaults, Error> {
+    let row = sqlx::query!(
+        "SELECT pomodoro_work, pomodoro_pause, pomodoro_reps, pomodoro_auto 
+         FROM user_settings WHERE user_id = ?",
+        user_id
+    )
+    .fetch_optional(db)
+    .await?;
+    Ok(match row {
+        Some(r) => PomodoroDefaults {
+            work: r.pomodoro_work as u32,
+            pause: r.pomodoro_pause as u32,
+            reps: endless_if_zero(r.pomodoro_reps as u32),
+            auto: r.pomodoro_auto,
+        },
+        None => PomodoroDefaults {
+            work: 25,
+            pause: 5,
+            reps: None,
+            auto: false,
+        },
+    })
+}
+
 async fn is_tracked(ctx: Context<'_>, channel: serenity::ChannelId) -> Result<bool, Error> {
     let channel_id = channel.get() as i64;
     Ok(sqlx::query!(
@@ -19,16 +58,16 @@ async fn is_tracked(ctx: Context<'_>, channel: serenity::ChannelId) -> Result<bo
 #[poise::command(slash_command, guild_only)]
 pub async fn pomodoro(
     ctx: Context<'_>,
-    #[description = "Work cycle in minutes (default 25)"]
+    #[description = "Work cycle in minutes (default: yours from /config_pomodoro)"]
     #[min = 1]
     #[max = 240]
     work: Option<u32>,
-    #[description = "Pause cycle in minutes (default 5)"]
+    #[description = "Pause cycle in minutes (default: yours from /config_pomodoro)"]
     #[min = 1]
     #[max = 60]
     pause: Option<u32>,
-    #[description = "Number of work cycles (default: until you leave)"]
-    #[min = 1]
+    #[description = "Number of work cycles, 0 = until you leave (default: yours)"]
+    #[min = 0]
     #[max = 100]
     repetitions: Option<u32>,
 ) -> Result<(), Error> {
@@ -64,7 +103,10 @@ pub async fn pomodoro(
         .await;
     }
 
-    let (work, pause) = (work.unwrap_or(25), pause.unwrap_or(5));
+    let defaults = pomodoro_defaults(&ctx.data().db, user.get() as i64).await?;
+    let work = work.unwrap_or(defaults.work);
+    let pause = pause.unwrap_or(defaults.pause);
+    let repetitions = repetitions.map_or(defaults.reps, endless_if_zero);
     pomodoro::start(Config {
         http: ctx.serenity_context().http.clone(),
         pomodoros: ctx.data().pomodoros.clone(),

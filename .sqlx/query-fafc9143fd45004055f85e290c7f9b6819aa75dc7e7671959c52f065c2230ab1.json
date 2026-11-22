@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO user_settings (user_id, pomodoro_work, pomodoro_pause, pomodoro_reps, pomodoro_auto) \n         VALUES (?, ?, ?, ?, ?) \n         ON CONFLICT(user_id) DO UPDATE SET \n         pomodoro_work = excluded.pomodoro_work,\n         pomodoro_pause = excluded.pomodoro_pause,\n         pomodoro_reps = excluded.pomodoro_reps,\n         pomodoro_auto = excluded.pomodoro_auto",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "fafc9143fd45004055f85e290c7f9b6819aa75dc7e7671959c52f065c2230ab1"
+}

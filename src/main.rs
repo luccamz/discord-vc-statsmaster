@@ -157,6 +157,7 @@ async fn main() {
                 config_changelogs(),
                 config_pomodoro_lobby(),
                 pomodoro(),
+                config_pomodoro(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
