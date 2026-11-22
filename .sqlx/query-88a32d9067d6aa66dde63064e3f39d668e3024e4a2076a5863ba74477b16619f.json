@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT pomodoro_lobby_channel_id FROM guild_settings WHERE guild_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "pomodoro_lobby_channel_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "88a32d9067d6aa66dde63064e3f39d668e3024e4a2076a5863ba74477b16619f"
+}

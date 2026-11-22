@@ -1,5 +1,6 @@
 mod commands;
 mod events;
+mod pomodoro;
 mod state;
 mod tasks;
 
@@ -139,6 +140,7 @@ async fn main() {
                 config_timezone(),
                 config_changelogs(),
                 config_pomodoro_lobby(),
+                pomodoro(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
@@ -173,6 +175,7 @@ async fn main() {
                 Ok(Data {
                     db,
                     active_sessions,
+                    pomodoros: Default::default(),
                 })
             })
         })
