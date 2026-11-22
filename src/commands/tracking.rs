@@ -156,6 +156,7 @@ pub async fn cancel_session(ctx: Context<'_>) -> Result<(), Error> {
     if let Some(mci) = serenity::ComponentInteractionCollector::new(ctx)
         .author_id(ctx.author().id)
         .channel_id(ctx.channel_id())
+        .custom_ids(vec!["confirm_cancel".into(), "cancel_cancel".into()])
         .timeout(std::time::Duration::from_secs(30))
         .await
     {
@@ -284,6 +285,7 @@ pub async fn reset_stats(
     if let Some(mci) = serenity::ComponentInteractionCollector::new(ctx)
         .author_id(ctx.author().id)
         .channel_id(ctx.channel_id())
+        .custom_ids(vec!["confirm_reset".into(), "cancel_reset".into()])
         .timeout(std::time::Duration::from_secs(30))
         .await
     {
