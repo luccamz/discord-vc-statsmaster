@@ -22,23 +22,16 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
 
     match record {
         Some(row) => {
-            let total_seconds: i64 = row.total_seconds;
-            let hours = total_seconds / 3600;
-            let minutes = (total_seconds % 3600) / 60;
-            let percent = if row.personal_record > 0 {
-                Some((total_seconds as f64 / row.personal_record as f64) * 100.0)
+            let (hours, minutes) = (row.total_seconds / 3600, (row.total_seconds % 3600) / 60);
+            let pr = if row.personal_record > 0 {
+                let percent = row.total_seconds as f64 / row.personal_record as f64 * 100.0;
+                format!("**{percent:.0}%** of your PR!")
             } else {
-                None
+                "first week, no PR yet!".to_string()
             };
-
             embed = embed.field(
                 "Total Time",
-                format!(
-                    "**{}** hours and **{}** minutes.. **{:.0}%** of your PR!",
-                    hours,
-                    minutes,
-                    percent.unwrap_or(9999999.0)
-                ),
+                format!("**{hours}** hours and **{minutes}** minutes.. {pr}"),
                 false,
             );
             embed = embed.field(
