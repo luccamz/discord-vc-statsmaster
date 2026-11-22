@@ -1,3 +1,5 @@
 /target
 .env
 stats.db
+stats.db-wal
+stats.db-shm

@@ -6,8 +6,8 @@ mod state;
 mod tasks;
 
 use poise::serenity_prelude as serenity;
-use sqlx::sqlite::SqlitePoolOptions;
-use std::{collections::HashMap, env, sync::Arc};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use std::{collections::HashMap, env, str::FromStr, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::commands::*;
@@ -112,8 +112,14 @@ async fn main() {
 
     let db_url = env::var("DATABASE_URL").unwrap_or("sqlite://stats.db?mode=rwc".to_string());
 
+    let db_options = SqliteConnectOptions::from_str(&db_url)
+        .expect("Invalid DATABASE_URL")
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(5));
+
     let db = SqlitePoolOptions::new()
-        .connect(&db_url)
+        .connect_with(db_options)
         .await
         .expect("Failed to connect to database");
 
