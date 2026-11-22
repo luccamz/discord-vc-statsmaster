@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT task_id, description, is_last_selected \n                         FROM user_tasks \n                         WHERE user_id = ? \n                           AND completed_at IS NULL \n                           AND terminated_at IS NULL",
+  "query": "SELECT task_id, description, is_last_selected \n                     FROM user_tasks \n                     WHERE user_id = ? \n                       AND completed_at IS NULL \n                       AND terminated_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -28,5 +28,5 @@
       false
     ]
   },
-  "hash": "ce81035de335887353a69ce5a01a0ce902f7c052298a3aa07f88a0f185bf208b"
+  "hash": "de75d874e6e010b2cedf6ab969a0e877095c3e31be7bf8e84670d215f591ae42"
 }

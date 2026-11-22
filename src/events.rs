@@ -1,7 +1,7 @@
 use crate::commands::tasks::build_todo_components;
 use crate::state::{Data, Error, SessionData};
 use poise::serenity_prelude as serenity;
-use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 
 async fn acknowledge_setup_step(
     ctx: &serenity::Context,
@@ -155,33 +155,71 @@ pub async fn handle_event(
                 new.channel_id,
             );
 
-            let mut sessions = data.active_sessions.lock().await;
+            let key = (user_id as u64, guild_id as u64);
             let now = chrono::Utc::now().timestamp();
+            let new_channel = new.channel_id.map(|c| c.get());
 
             // Mute, deafen, stream and video updates keep the channel: leave the session running.
-            let new_channel = new.channel_id.map(|c| c.get());
-            if sessions
-                .get(&(user_id as u64, guild_id as u64))
-                .is_some_and(|s| Some(s.channel_id) == new_channel)
-            {
+            let same_channel = |sessions: &HashMap<(u64, u64), SessionData>| {
+                sessions
+                    .get(&key)
+                    .is_some_and(|s| Some(s.channel_id) == new_channel)
+            };
+            if same_channel(&*data.active_sessions.lock().await) {
                 return Ok(());
             }
 
-            let mut is_in_tracked_channel = false;
-            let mut current_channel_id = 0;
-            if let Some(channel_id_non_zero) = new.channel_id {
-                let channel_id = channel_id_non_zero.get() as i64;
-                current_channel_id = channel_id;
-                let existing = sqlx::query!(
+            let current_channel_id = new_channel.unwrap_or(0) as i64;
+            let is_in_tracked_channel = new_channel.is_some()
+                && sqlx::query!(
                     "SELECT channel_id FROM tracked_channels WHERE channel_id = ?",
-                    channel_id
+                    current_channel_id
                 )
                 .fetch_optional(&data.db)
-                .await?;
-                is_in_tracked_channel = existing.is_some();
-            }
+                .await?
+                .is_some();
 
-            if let Some(session) = sessions.remove(&(user_id as u64, guild_id as u64)) {
+            let pending_tasks = if is_in_tracked_channel {
+                sqlx::query!(
+                    "SELECT task_id, description, is_last_selected 
+                     FROM user_tasks 
+                     WHERE user_id = ? 
+                       AND completed_at IS NULL 
+                       AND terminated_at IS NULL",
+                    user_id
+                )
+                .fetch_all(&data.db)
+                .await?
+            } else {
+                Vec::new()
+            };
+            let initial_task = pending_tasks.iter().find(|t| t.is_last_selected);
+            let initial_task_id = initial_task.and_then(|t| t.task_id);
+            let active_task_name = initial_task.map_or("Nothing in particular".to_string(), |t| {
+                t.description.clone()
+            });
+
+            // Swap sessions under the lock; write to the database after releasing it.
+            let old = {
+                let mut sessions = data.active_sessions.lock().await;
+                if same_channel(&sessions) {
+                    return Ok(());
+                }
+                let old = sessions.remove(&key);
+                if is_in_tracked_channel {
+                    sessions.insert(
+                        key,
+                        SessionData {
+                            start_time: now,
+                            active_task_id: initial_task_id,
+                            channel_id: current_channel_id as u64,
+                        },
+                    );
+                }
+                old
+            };
+
+            if let Some(session) = old {
                 crate::sessions::commit(
                     &data.db,
                     user_id,
@@ -193,120 +231,79 @@ pub async fn handle_event(
                 .await?;
             }
 
-            if is_in_tracked_channel {
-                if let Entry::Vacant(e) = sessions.entry((user_id as u64, guild_id as u64)) {
-                    // Fetch pending tasks and find the last selected task
-                    let pending_tasks = sqlx::query!(
-                        "SELECT task_id, description, is_last_selected 
-                         FROM user_tasks 
-                         WHERE user_id = ? 
-                           AND completed_at IS NULL 
-                           AND terminated_at IS NULL",
-                        user_id
+            // Prompt only when there is a task to choose from.
+            if is_in_tracked_channel && !pending_tasks.is_empty() {
+                let prompt_content = format!(
+                    "<@{}> Currently working on.. {}. Change status?",
+                    user_id, active_task_name
+                );
+
+                let mut options = Vec::new();
+                let mut no_task_opt =
+                    serenity::CreateSelectMenuOption::new("Nothing in particular", "none");
+
+                if initial_task_id.is_none() {
+                    no_task_opt = no_task_opt.default_selection(true);
+                }
+                options.push(no_task_opt);
+
+                for task in pending_tasks {
+                    let mut opt = serenity::CreateSelectMenuOption::new(
+                        &task.description,
+                        task.task_id.unwrap().to_string(),
+                    );
+                    if task.is_last_selected {
+                        opt = opt.default_selection(true);
+                    }
+                    options.push(opt);
+                }
+
+                options.truncate(25);
+
+                let menu = serenity::CreateSelectMenu::new(
+                    format!("task_select_{}", user_id),
+                    serenity::CreateSelectMenuKind::String { options },
+                );
+
+                let channel = serenity::ChannelId::new(current_channel_id as u64);
+                if let Ok(message) = channel
+                    .send_message(
+                        ctx,
+                        serenity::CreateMessage::new()
+                            .content(prompt_content)
+                            .select_menu(menu),
                     )
-                    .fetch_all(&data.db)
-                    .await?;
+                    .await
+                {
+                    let http = ctx.http.clone();
+                    let shard_messenger = ctx.shard.clone();
 
-                    // early return to avoid prompting the user when todo is empty
-                    if pending_tasks.is_empty() {
-                        e.insert(SessionData {
-                            start_time: now,
-                            active_task_id: None,
-                            channel_id: current_channel_id as u64,
-                        });
-                        return Ok(());
-                    }
+                    tokio::spawn(async move {
+                        use poise::serenity_prelude as serenity;
+                        use serenity::futures::StreamExt;
 
-                    let mut initial_task_id = None;
-                    let mut active_task_name = "Nothing in particular".to_string();
-
-                    for task in &pending_tasks {
-                        if task.is_last_selected {
-                            initial_task_id = Some(task.task_id.unwrap());
-                            active_task_name = task.description.clone();
-                        }
-                    }
-
-                    e.insert(SessionData {
-                        start_time: now,
-                        active_task_id: initial_task_id,
-                        channel_id: current_channel_id as u64,
-                    });
-
-                    drop(sessions);
-
-                    let prompt_content = format!(
-                        "<@{}> Currently working on.. {}. Change status?",
-                        user_id, active_task_name
-                    );
-
-                    let mut options = Vec::new();
-                    let mut no_task_opt =
-                        serenity::CreateSelectMenuOption::new("Nothing in particular", "none");
-
-                    if initial_task_id.is_none() {
-                        no_task_opt = no_task_opt.default_selection(true);
-                    }
-                    options.push(no_task_opt);
-
-                    for task in pending_tasks {
-                        let mut opt = serenity::CreateSelectMenuOption::new(
-                            &task.description,
-                            task.task_id.unwrap().to_string(),
-                        );
-                        if task.is_last_selected {
-                            opt = opt.default_selection(true);
-                        }
-                        options.push(opt);
-                    }
-
-                    options.truncate(25);
-
-                    let menu = serenity::CreateSelectMenu::new(
-                        format!("task_select_{}", user_id),
-                        serenity::CreateSelectMenuKind::String { options },
-                    );
-
-                    let channel = serenity::ChannelId::new(current_channel_id as u64);
-                    if let Ok(message) = channel
-                        .send_message(
-                            ctx,
-                            serenity::CreateMessage::new()
-                                .content(prompt_content)
-                                .select_menu(menu),
-                        )
-                        .await
-                    {
-                        let http = ctx.http.clone();
-                        let shard_messenger = ctx.shard.clone();
-
-                        tokio::spawn(async move {
-                            use poise::serenity_prelude as serenity;
-                            use serenity::futures::StreamExt;
-
-                            let mut collector =
-                                serenity::collector::collect(&shard_messenger, move |event| {
-                                    if let serenity::Event::VoiceStateUpdate(data) = event {
-                                        let state = &data.voice_state;
-                                        if state.user_id.get() as i64 == user_id
-                                            && state.channel_id.map(|c| c.get() as i64)
-                                                != Some(current_channel_id)
-                                        {
-                                            return Some(());
-                                        }
+                        let mut collector =
+                            serenity::collector::collect(&shard_messenger, move |event| {
+                                if let serenity::Event::VoiceStateUpdate(data) = event {
+                                    let state = &data.voice_state;
+                                    if state.user_id.get() as i64 == user_id
+                                        && state.channel_id.map(|c| c.get() as i64)
+                                            != Some(current_channel_id)
+                                    {
+                                        return Some(());
                                     }
-                                    None
-                                });
+                                }
+                                None
+                            });
 
-                            let _ = tokio::time::timeout(
-                                std::time::Duration::from_secs(86400),
-                                collector.next(),
-                            )
-                            .await;
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(86400),
+                            collector.next(),
+                        )
+                        .await;
 
-                            let _ = message.delete(&http).await;
-                        });
-                    }
+                        let _ = message.delete(&http).await;
+                    });
                 }
             }
         }
@@ -461,23 +458,22 @@ pub async fn handle_event(
                 let selected_value = &values[0];
 
                 let now = chrono::Utc::now().timestamp();
-                let mut sessions = data.active_sessions.lock().await;
+                let previous = data
+                    .active_sessions
+                    .lock()
+                    .await
+                    .get_mut(&(user_id as u64, guild_id as u64))
+                    .map(|session| {
+                        let previous = (session.start_time, session.active_task_id);
+                        session.start_time = now;
+                        session.active_task_id = selected_value.parse().ok();
+                        previous
+                    });
 
-                if let Some(session) = sessions.get_mut(&(user_id as u64, guild_id as u64)) {
-                    crate::sessions::commit(
-                        &data.db,
-                        user_id,
-                        guild_id,
-                        session.start_time,
-                        session.active_task_id,
-                        now,
-                    )
-                    .await?;
-
-                    session.start_time = now;
-                    session.active_task_id = selected_value.parse().ok();
+                if let Some((start, task_id)) = previous {
+                    crate::sessions::commit(&data.db, user_id, guild_id, start, task_id, now)
+                        .await?;
                 }
-                drop(sessions);
 
                 let selected_task: Option<i64> = selected_value.parse().ok();
                 sqlx::query!(
