@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO guild_settings (guild_id, announcement_channel_id, reset_day, reset_hour, reset_minute, last_reset_at) \n         VALUES (?, ?, ?, ?, ?, ?) \n         ON CONFLICT(guild_id) DO UPDATE SET \n         announcement_channel_id = excluded.announcement_channel_id,\n         reset_day = excluded.reset_day,\n         reset_hour = excluded.reset_hour,\n         reset_minute = excluded.reset_minute,\n         last_reset_at = excluded.last_reset_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "c019e61eb99762d680d7a34f32bad87e265bfd5ef1be1c8762c22048a41f69d6"
+}

@@ -400,11 +400,12 @@ pub async fn handle_event(
                     {
                         if let Some(day_str) = values.first() {
                             let day: i64 = day_str.parse().unwrap_or(0);
+                            let now = chrono::Utc::now().timestamp();
                             sqlx::query!(
-                            "INSERT INTO guild_settings (guild_id, announcement_channel_id, reset_day) 
-                             VALUES (?, 0, ?) 
-                             ON CONFLICT(guild_id) DO UPDATE SET reset_day = ?",
-                            guild_id, day, day
+                            "INSERT INTO guild_settings (guild_id, announcement_channel_id, reset_day, last_reset_at) 
+                             VALUES (?, 0, ?, ?) 
+                             ON CONFLICT(guild_id) DO UPDATE SET reset_day = excluded.reset_day, last_reset_at = excluded.last_reset_at",
+                            guild_id, day, now
                         )
                         .execute(&data.db).await?;
 

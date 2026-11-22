@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE guild_settings SET weeks_tracked = ?, last_reset_at = ? WHERE guild_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "af69d5b04fefd0b67074a555fb1e526652a231c38b3898d77ba2d470fc7d1b53"
+}

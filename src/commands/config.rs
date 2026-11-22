@@ -37,19 +37,23 @@ pub async fn config_schedule(
         utc_day = (utc_day + 1).rem_euclid(7);
     }
 
+    // A new schedule starts from now, so a slot that just passed does not reset at once.
+    let now = chrono::Utc::now().timestamp();
     sqlx::query!(
-        "INSERT INTO guild_settings (guild_id, announcement_channel_id, reset_day, reset_hour, reset_minute) 
-         VALUES (?, ?, ?, ?, ?) 
+        "INSERT INTO guild_settings (guild_id, announcement_channel_id, reset_day, reset_hour, reset_minute, last_reset_at) 
+         VALUES (?, ?, ?, ?, ?, ?) 
          ON CONFLICT(guild_id) DO UPDATE SET 
          announcement_channel_id = excluded.announcement_channel_id,
          reset_day = excluded.reset_day,
          reset_hour = excluded.reset_hour,
-         reset_minute = excluded.reset_minute",
+         reset_minute = excluded.reset_minute,
+         last_reset_at = excluded.last_reset_at",
         guild_id,
         channel_id,
         utc_day,
         utc_hour,
-        minute
+        minute,
+        now
     )
     .execute(&ctx.data().db)
     .await?;

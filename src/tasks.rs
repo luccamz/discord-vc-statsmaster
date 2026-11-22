@@ -1,5 +1,5 @@
 use crate::state::{Error, SessionData};
-use chrono::{Datelike, Timelike};
+use chrono::{DateTime, Datelike, NaiveTime, Utc};
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -39,6 +39,7 @@ async fn perform_guild_reset(
     guild_id: i64,
     channel_id: i64,
     current_weeks: i64,
+    scheduled: i64,
 ) -> Result<(), Error> {
     let new_weeks = current_weeks + 1;
 
@@ -54,8 +55,9 @@ async fn perform_guild_reset(
 
     let mut tx = db.begin().await?;
     sqlx::query!(
-        "UPDATE guild_settings SET weeks_tracked = ? WHERE guild_id = ?",
+        "UPDATE guild_settings SET weeks_tracked = ?, last_reset_at = ? WHERE guild_id = ?",
         new_weeks,
+        scheduled,
         guild_id
     )
     .execute(&mut *tx)
@@ -112,6 +114,21 @@ async fn perform_guild_reset(
     Ok(())
 }
 
+/// The latest scheduled reset at or before `now`, with `day` counted from Monday = 0, in UTC.
+fn last_scheduled_reset(now: DateTime<Utc>, day: i64, hour: i64, minute: i64) -> Option<i64> {
+    let time = NaiveTime::from_hms_opt(hour.try_into().ok()?, minute.try_into().ok()?, 0)?;
+    let days_back = (now.weekday().num_days_from_monday() as i64 - day).rem_euclid(7);
+    let scheduled = (now.date_naive() - chrono::Duration::days(days_back))
+        .and_time(time)
+        .and_utc();
+    let scheduled = if scheduled > now {
+        scheduled - chrono::Duration::weeks(1)
+    } else {
+        scheduled
+    };
+    Some(scheduled.timestamp())
+}
+
 pub async fn weekly_reset_task(
     http: Arc<serenity::Http>,
     db: SqlitePool,
@@ -120,39 +137,63 @@ pub async fn weekly_reset_task(
     let mut interval = tokio::time::interval(Duration::from_secs(60));
 
     loop {
-        interval.tick().await; // Wait for the next 60-second boundary
+        interval.tick().await;
 
-        let now = chrono::Utc::now();
-        let current_day = now.weekday().num_days_from_monday() as i64;
-        let current_hour = now.hour() as i64;
-        let current_minute = now.minute() as i64;
-
-        // Query only the guilds scheduled for this exact minute
-        let pending_resets = sqlx::query!(
-            "SELECT guild_id, announcement_channel_id, weeks_tracked FROM guild_settings 
-             WHERE reset_day = ? AND reset_hour = ? AND reset_minute = ?",
-            current_day,
-            current_hour,
-            current_minute
+        let settings = match sqlx::query!(
+            "SELECT guild_id, announcement_channel_id, weeks_tracked, 
+                    reset_day, reset_hour, reset_minute, last_reset_at 
+             FROM guild_settings"
         )
         .fetch_all(&db)
-        .await;
+        .await
+        {
+            Ok(settings) => settings,
+            Err(e) => {
+                eprintln!("Failed to load reset schedules: {}", e);
+                continue;
+            }
+        };
 
-        if let Ok(settings) = pending_resets {
-            for row in settings {
-                let guild_id: i64 = row.guild_id;
-                let channel_id: i64 = row.announcement_channel_id;
-                let weeks_tracked: i64 = row.weeks_tracked;
+        // Catch up on any reset missed while the bot was down, not only the exact minute.
+        let now = chrono::Utc::now();
+        for row in settings {
+            let guild_id = row.guild_id;
+            let Some(scheduled) =
+                last_scheduled_reset(now, row.reset_day, row.reset_hour, row.reset_minute)
+            else {
+                continue;
+            };
 
-                if let Err(e) =
-                    perform_guild_reset(&http, &db, &sessions, guild_id, channel_id, weeks_tracked)
-                        .await
-                {
-                    eprintln!(
-                        "Failed to execute scheduled reset for guild {}: {}",
-                        guild_id, e
-                    );
+            let result = match row.last_reset_at {
+                // First run for this guild: take the last scheduled time as the baseline.
+                None => sqlx::query!(
+                    "UPDATE guild_settings SET last_reset_at = ? WHERE guild_id = ?",
+                    scheduled,
+                    guild_id
+                )
+                .execute(&db)
+                .await
+                .map(|_| ())
+                .map_err(Into::into),
+                Some(last) if last < scheduled => {
+                    perform_guild_reset(
+                        &http,
+                        &db,
+                        &sessions,
+                        guild_id,
+                        row.announcement_channel_id,
+                        row.weeks_tracked,
+                        scheduled,
+                    )
+                    .await
                 }
+                Some(_) => Ok(()),
+            };
+            if let Err(e) = result {
+                eprintln!(
+                    "Failed to execute scheduled reset for guild {}: {}",
+                    guild_id, e
+                );
             }
         }
     }
@@ -190,5 +231,42 @@ pub async fn deadline_check_task(db: SqlitePool) {
         )
         .execute(&db)
         .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn ts(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap()
+    }
+
+    #[test]
+    fn last_scheduled_reset_picks_latest_past_slot() {
+        // 2026-11-23 is a Monday.
+        let monday_9 = ts(2026, 11, 23, 9, 0);
+        assert_eq!(
+            last_scheduled_reset(monday_9, 0, 8, 30),
+            Some(ts(2026, 11, 23, 8, 30).timestamp())
+        );
+        assert_eq!(
+            last_scheduled_reset(monday_9, 0, 9, 0),
+            Some(monday_9.timestamp())
+        );
+        assert_eq!(
+            last_scheduled_reset(monday_9, 0, 9, 1),
+            Some(ts(2026, 11, 16, 9, 1).timestamp())
+        );
+        assert_eq!(
+            last_scheduled_reset(monday_9, 6, 23, 0),
+            Some(ts(2026, 11, 22, 23, 0).timestamp())
+        );
+        assert_eq!(
+            last_scheduled_reset(monday_9, 2, 0, 0),
+            Some(ts(2026, 11, 18, 0, 0).timestamp())
+        );
+        assert_eq!(last_scheduled_reset(monday_9, 0, 24, 0), None);
     }
 }
