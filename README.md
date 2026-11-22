@@ -8,6 +8,7 @@ The time leaderboard and personal record tracking is meant to serve as extra mot
 
 * **Voice Channel Tracking**: Monitors and logs the duration users spend in designated voice channels.
 * **Task Management**: Allows users to create tasks and set relative or absolute deadlines using slash commands (`/add_task`, `/edit_deadline`).
+* **Pomodoro Mode**: `/pomodoro` alternates work cycles in a tracked channel with pauses in a lobby set by `/config_pomodoro_lobby`, moving you automatically. Leaving or switching channels cancels it.
 * **Automated Reporting**: Executes weekly statistics resets and publishes summaries or changelogs to configured text channels.
 
 ## Discord Application Setup
@@ -28,6 +29,8 @@ Create an application in the Discord Developer Portal and configure the followin
 | View Channels | Allows the bot to establish presence and detect voice or text channels. |
 | Send Messages | Required to send standard command responses and system alerts. |
 | Embed Links | Required to render interactive setup dashboards and formatted task lists. |
+| Connect | Required on the tracked and lobby channels to move users between them. |
+| Move Members | Required for pomodoro mode to move users to the lobby and back, and to disconnect them at the end. |
 
 ## Local Setup
 
