@@ -149,7 +149,7 @@ pub async fn handle_event(
                             ],
                         },
                     )
-                    .placeholder("Select Weekly Reset Day");
+                    .placeholder("Weekly reset day (00:00 UTC)");
 
                     let finish_button = serenity::CreateButton::new("setup_finish")
                         .label("Finish Setup")
@@ -431,7 +431,11 @@ pub async fn handle_event(
                         )
                         .execute(&data.db).await?;
 
-                            acknowledge_setup_step(ctx, component, "Weekly reset day saved!")
+                            acknowledge_setup_step(
+                                ctx,
+                                component,
+                                "Weekly reset day saved (00:00 UTC). Use `/config_schedule` to set your local time.",
+                            )
                                 .await?;
                             break 'interaction;
                         }
