@@ -1,6 +1,6 @@
 use crate::commands::reply_private;
 use crate::pomodoro::{self, Config};
-use crate::state::{Context, Error};
+use crate::state::{Context, Data, Error};
 use poise::serenity_prelude as serenity;
 use std::time::Duration;
 
@@ -43,15 +43,65 @@ pub async fn pomodoro_defaults(
     })
 }
 
-async fn is_tracked(ctx: Context<'_>, channel: serenity::ChannelId) -> Result<bool, Error> {
+async fn is_tracked(db: &sqlx::SqlitePool, channel: serenity::ChannelId) -> Result<bool, Error> {
     let channel_id = channel.get() as i64;
     Ok(sqlx::query!(
         "SELECT channel_id FROM tracked_channels WHERE channel_id = ?",
         channel_id
     )
-    .fetch_optional(&ctx.data().db)
+    .fetch_optional(db)
     .await?
     .is_some())
+}
+
+fn launch(
+    ctx: &serenity::Context,
+    data: &Data,
+    guild: serenity::GuildId,
+    user: serenity::UserId,
+    work_channel: serenity::ChannelId,
+    lobby: serenity::ChannelId,
+    params: &PomodoroDefaults,
+) {
+    pomodoro::start(Config {
+        http: ctx.http.clone(),
+        pomodoros: data.pomodoros.clone(),
+        guild,
+        user,
+        work_channel,
+        lobby,
+        work: Duration::from_secs(params.work as u64 * 60),
+        pause: Duration::from_secs(params.pause as u64 * 60),
+        reps: params.reps,
+        db: data.db.clone(),
+        shard: ctx.shard.clone(),
+        prompts: data.prompts.clone(),
+    });
+}
+
+/// Starts a pomodoro with the user's defaults when they chose it as their default mode.
+/// Does nothing without a usable lobby.
+pub async fn auto_start(
+    ctx: &serenity::Context,
+    data: &Data,
+    guild: serenity::GuildId,
+    user: serenity::UserId,
+    work_channel: serenity::ChannelId,
+) -> Result<(), Error> {
+    let defaults = pomodoro_defaults(&data.db, user.get() as i64).await?;
+    if !defaults.auto {
+        return Ok(());
+    }
+    let Some(lobby) = crate::commands::config::pomodoro_lobby(&data.db, guild.get() as i64)
+        .await?
+        .map(|id| serenity::ChannelId::new(id as u64))
+    else {
+        return Ok(());
+    };
+    if !is_tracked(&data.db, lobby).await? {
+        launch(ctx, data, guild, user, work_channel, lobby, &defaults);
+    }
+    Ok(())
 }
 
 /// Starts pomodoro mode in your current tracked voice channel.
@@ -80,7 +130,7 @@ pub async fn pomodoro(
     let Some(work_channel) = current else {
         return reply_private(ctx, "Join a tracked voice channel first.").await;
     };
-    if !is_tracked(ctx, work_channel).await? {
+    if !is_tracked(&ctx.data().db, work_channel).await? {
         return reply_private(ctx, "Pomodoro mode only works in tracked voice channels.").await;
     }
 
@@ -95,7 +145,7 @@ pub async fn pomodoro(
         )
         .await;
     };
-    if is_tracked(ctx, lobby).await? {
+    if is_tracked(&ctx.data().db, lobby).await? {
         return reply_private(
             ctx,
             "The pomodoro lobby is a tracked channel. Ask an admin to change it.",
@@ -107,20 +157,21 @@ pub async fn pomodoro(
     let work = work.unwrap_or(defaults.work);
     let pause = pause.unwrap_or(defaults.pause);
     let repetitions = repetitions.map_or(defaults.reps, endless_if_zero);
-    pomodoro::start(Config {
-        http: ctx.serenity_context().http.clone(),
-        pomodoros: ctx.data().pomodoros.clone(),
+    let params = PomodoroDefaults {
+        work,
+        pause,
+        reps: repetitions,
+        auto: defaults.auto,
+    };
+    launch(
+        ctx.serenity_context(),
+        ctx.data(),
         guild,
         user,
         work_channel,
         lobby,
-        work: Duration::from_secs(work as u64 * 60),
-        pause: Duration::from_secs(pause as u64 * 60),
-        reps: repetitions,
-        db: ctx.data().db.clone(),
-        shard: ctx.serenity_context().shard.clone(),
-        prompts: ctx.data().prompts.clone(),
-    });
+        &params,
+    );
 
     let rounds = repetitions.map_or("∞".to_string(), |r| r.to_string());
     reply_private(ctx,

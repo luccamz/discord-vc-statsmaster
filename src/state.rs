@@ -17,6 +17,8 @@ pub struct Pomodoro {
     pub allowed: [Option<ChannelId>; 2],
     pub status_msg: Option<(ChannelId, MessageId)>,
     pub control: tokio::sync::mpsc::UnboundedSender<crate::pomodoro::Control>,
+    /// Stopped from the lobby and being moved back to the work channel.
+    pub returning: bool,
 }
 
 pub type Pomodoros = Arc<std::sync::Mutex<HashMap<(u64, u64), Pomodoro>>>;

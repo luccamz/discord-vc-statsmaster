@@ -183,7 +183,7 @@ pub async fn handle_event(
             };
             let guild_id = guild_id_nonzero.get() as i64;
 
-            crate::pomodoro::on_voice_update(
+            let returned_to_normal = crate::pomodoro::on_voice_update(
                 &ctx.http,
                 &data.pomodoros,
                 (user_id as u64, guild_id as u64),
@@ -247,6 +247,23 @@ pub async fn handle_event(
             }
 
             // Prompt only when there is a task to choose from.
+            if is_in_tracked_channel
+                && !returned_to_normal
+                && !pomodoro::is_running(&data.pomodoros, key)
+            {
+                if let Err(e) = crate::commands::pomodoro::auto_start(
+                    ctx,
+                    data,
+                    guild_id_nonzero,
+                    new.user_id,
+                    serenity::ChannelId::new(current_channel_id as u64),
+                )
+                .await
+                {
+                    eprintln!("Failed to auto-start pomodoro for user {}: {}", user_id, e);
+                }
+            }
+
             // A running pomodoro carries the task dropdown on its timer message instead.
             if is_in_tracked_channel
                 && !pending_tasks.is_empty()

@@ -88,6 +88,7 @@ pub fn start(cfg: Config) {
         allowed: [Some(cfg.work_channel), None],
         status_msg: None,
         control,
+        returning: false,
     };
 
     let old = lock(&pomodoros).insert(key, entry);
@@ -124,23 +125,26 @@ pub fn users_in_guild(pomodoros: &Pomodoros, guild: u64) -> Vec<(u64, u64)> {
         .collect()
 }
 
-/// Cancels the user's pomodoro if they left the channel it expects them in.
+/// Cancels the user's pomodoro if they left the channel it expects them in. Returns true
+/// when this update completes a stop from the lobby, which is a return to normal mode.
 pub fn on_voice_update(
     http: &Arc<Http>,
     pomodoros: &Pomodoros,
     key: (u64, u64),
     new: Option<ChannelId>,
-) {
-    let removed = {
-        let mut map = lock(pomodoros);
-        match map.get(&key) {
-            Some(p) if should_cancel(&p.allowed, new) => map.remove(&key),
-            _ => None,
-        }
+) -> bool {
+    let mut map = lock(pomodoros);
+    let Some(p) = map.get(&key) else {
+        return false;
     };
-    if let Some(p) = removed {
-        stop(http, p);
+    let cancel = should_cancel(&p.allowed, new);
+    let returned = p.returning && !cancel && new == p.allowed[1];
+    if cancel || returned {
+        if let Some(p) = map.remove(&key) {
+            stop(http, p);
+        }
     }
+    returned
 }
 
 /// Returns false if this run was cancelled or replaced.
@@ -472,15 +476,33 @@ async fn take_break(cfg: &Config, id: u64, rx: &mut UnboundedReceiver<Control>, 
 
 /// Ends the run on the user's request and leaves them tracked in their work channel.
 async fn back_to_normal(cfg: &Config, id: u64, in_lobby: bool) {
-    // Remove first so the move back is treated as a plain join, which posts the task prompt.
-    if !finish(cfg, id) {
-        return;
-    }
     if in_lobby {
-        let _ = cfg
+        // The entry stays, marked as returning, until the voice update for this move
+        // clears it; that update then posts the task prompt and skips auto-start.
+        let mut status = None;
+        let alive = update_own(cfg, id, |p| {
+            p.returning = true;
+            p.allowed = [Some(cfg.lobby), Some(cfg.work_channel)];
+            status = p.status_msg.take();
+        });
+        if !alive {
+            return;
+        }
+        if let Some((channel, msg)) = status {
+            let _ = channel.delete_message(&*cfg.http, msg).await;
+        }
+        if cfg
             .guild
             .move_member(&*cfg.http, cfg.user, cfg.work_channel)
-            .await;
+            .await
+            .is_err()
+        {
+            finish(cfg, id);
+        }
+        return;
+    }
+
+    if !finish(cfg, id) {
         return;
     }
     let user_id = cfg.user.get() as i64;
