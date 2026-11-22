@@ -1,4 +1,4 @@
-use crate::commands::tasks::{build_todo, pending_tasks, prompt_text, task_menu};
+use crate::commands::tasks::{build_todo, pending_tasks, prompt_text, task_menu, PromptTask};
 use crate::pomodoro::{self, Control};
 use crate::state::{Data, Error, SessionData};
 use poise::serenity_prelude as serenity;
@@ -22,6 +22,61 @@ async fn acknowledge_setup_step(
     Ok(())
 }
 
+/// Posts the "Currently working on" prompt and deletes it once the user leaves the channel.
+async fn post_task_prompt(
+    ctx: &serenity::Context,
+    data: &Data,
+    user_id: i64,
+    channel_id: i64,
+    tasks: &[PromptTask],
+    selected: Option<i64>,
+    silent: bool,
+) {
+    let mut message = serenity::CreateMessage::new()
+        .content(prompt_text(user_id, tasks, selected))
+        .select_menu(task_menu(format!("task_select_{user_id}"), tasks, selected));
+    if silent {
+        message = message.flags(serenity::MessageFlags::SUPPRESS_NOTIFICATIONS);
+    }
+    let channel = serenity::ChannelId::new(channel_id as u64);
+    let Ok(message) = channel.send_message(ctx, message).await else {
+        return;
+    };
+
+    let http = ctx.http.clone();
+    let shard_messenger = ctx.shard.clone();
+    let prompts = data.prompts.clone();
+    let prompt = (message.channel_id, message.id);
+    prompts
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(prompt);
+
+    tokio::spawn(async move {
+        use serenity::futures::StreamExt;
+
+        let mut collector = serenity::collector::collect(&shard_messenger, move |event| {
+            if let serenity::Event::VoiceStateUpdate(data) = event {
+                let state = &data.voice_state;
+                if state.user_id.get() as i64 == user_id
+                    && state.channel_id.map(|c| c.get() as i64) != Some(channel_id)
+                {
+                    return Some(());
+                }
+            }
+            None
+        });
+
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(86400), collector.next()).await;
+
+        let _ = message.delete(&http).await;
+        prompts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&prompt);
+    });
+}
+
 pub async fn handle_event(
     ctx: &serenity::Context,
     event: &serenity::FullEvent,
@@ -29,8 +84,34 @@ pub async fn handle_event(
 ) -> Result<(), Error> {
     match event {
         serenity::FullEvent::GuildCreate { guild, is_new } => {
-            if let Err(e) = crate::sessions::sync_guild(&ctx.http, data, guild).await {
-                eprintln!("Failed to sync sessions for guild {}: {}", guild.id, e);
+            // Prompts were deleted on shutdown, so re-post them silently for restored sessions.
+            match crate::sessions::sync_guild(&ctx.http, data, guild).await {
+                Ok(restored) => {
+                    for (user, channel) in restored {
+                        if pomodoro::is_running(&data.pomodoros, (user, guild.id.get())) {
+                            continue;
+                        }
+                        let user_id = user as i64;
+                        match pending_tasks(&data.db, user_id).await {
+                            Ok(tasks) if !tasks.is_empty() => {
+                                let selected = tasks.iter().find(|t| t.last_selected).map(|t| t.id);
+                                post_task_prompt(
+                                    ctx,
+                                    data,
+                                    user_id,
+                                    channel as i64,
+                                    &tasks,
+                                    selected,
+                                    true,
+                                )
+                                .await;
+                            }
+                            Ok(_) => {}
+                            Err(e) => eprintln!("Failed to load tasks of user {}: {}", user, e),
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Failed to sync sessions for guild {}: {}", guild.id, e),
             }
 
             // is_new ensures this only fires when invited, not every time your bot restarts
@@ -227,63 +308,16 @@ pub async fn handle_event(
                 && !pending_tasks.is_empty()
                 && !pomodoro::is_running(&data.pomodoros, key)
             {
-                let prompt_content = prompt_text(user_id, &pending_tasks, initial_task_id);
-                let menu = task_menu(
-                    format!("task_select_{user_id}"),
+                post_task_prompt(
+                    ctx,
+                    data,
+                    user_id,
+                    current_channel_id,
                     &pending_tasks,
                     initial_task_id,
-                );
-
-                let channel = serenity::ChannelId::new(current_channel_id as u64);
-                if let Ok(message) = channel
-                    .send_message(
-                        ctx,
-                        serenity::CreateMessage::new()
-                            .content(prompt_content)
-                            .select_menu(menu),
-                    )
-                    .await
-                {
-                    let http = ctx.http.clone();
-                    let shard_messenger = ctx.shard.clone();
-                    let prompts = data.prompts.clone();
-                    let prompt = (message.channel_id, message.id);
-                    prompts
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .insert(prompt);
-
-                    tokio::spawn(async move {
-                        use poise::serenity_prelude as serenity;
-                        use serenity::futures::StreamExt;
-
-                        let mut collector =
-                            serenity::collector::collect(&shard_messenger, move |event| {
-                                if let serenity::Event::VoiceStateUpdate(data) = event {
-                                    let state = &data.voice_state;
-                                    if state.user_id.get() as i64 == user_id
-                                        && state.channel_id.map(|c| c.get() as i64)
-                                            != Some(current_channel_id)
-                                    {
-                                        return Some(());
-                                    }
-                                }
-                                None
-                            });
-
-                        let _ = tokio::time::timeout(
-                            std::time::Duration::from_secs(86400),
-                            collector.next(),
-                        )
-                        .await;
-
-                        let _ = message.delete(&http).await;
-                        prompts
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .remove(&prompt);
-                    });
-                }
+                    false,
+                )
+                .await;
             }
         }
         serenity::FullEvent::InteractionCreate {

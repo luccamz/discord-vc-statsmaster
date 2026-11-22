@@ -1,7 +1,7 @@
 use crate::state::{Data, Error, Pomodoros, Prompts, SessionData};
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
@@ -50,12 +50,13 @@ pub async fn commit(
 }
 
 /// Reconciles sessions with the voice states Discord sends on startup and on reconnect,
-/// because voice updates missed while disconnected are not replayed.
+/// because voice updates missed while disconnected are not replayed. Returns the
+/// `(user, channel)` sessions it started.
 pub async fn sync_guild(
     http: &Arc<serenity::Http>,
     data: &Data,
     guild: &serenity::Guild,
-) -> Result<(), Error> {
+) -> Result<Vec<(u64, u64)>, Error> {
     let guild_id = guild.id.get();
     let gid = guild_id as i64;
     let tracked: HashSet<u64> = sqlx::query_scalar!(
@@ -91,6 +92,7 @@ pub async fn sync_guild(
     }
 
     let now = chrono::Utc::now().timestamp();
+    let mut restored = Vec::new();
     let stale: Vec<(u64, SessionData)> = {
         let mut sessions = data.active_sessions.lock().await;
         let stale_users: Vec<u64> = sessions
@@ -103,12 +105,15 @@ pub async fn sync_guild(
             .filter_map(|user| Some((user, sessions.remove(&(user, guild_id))?)))
             .collect();
         for (&user, &channel) in &in_tracked {
-            sessions.entry((user, guild_id)).or_insert(SessionData {
-                start_time: now,
-                active_task_id: last_tasks[&user],
-                channel_id: channel,
-                counted: true,
-            });
+            if let Entry::Vacant(e) = sessions.entry((user, guild_id)) {
+                e.insert(SessionData {
+                    start_time: now,
+                    active_task_id: last_tasks[&user],
+                    channel_id: channel,
+                    counted: true,
+                });
+                restored.push((user, channel));
+            }
         }
         stale
     };
@@ -123,7 +128,7 @@ pub async fn sync_guild(
             .and_then(|v| v.channel_id);
         crate::pomodoro::on_voice_update(http, &data.pomodoros, key, channel);
     }
-    Ok(())
+    Ok(restored)
 }
 
 /// Commits all open sessions on SIGTERM or Ctrl+C, deletes the bot's live messages, then
