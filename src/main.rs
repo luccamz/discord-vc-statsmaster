@@ -1,6 +1,7 @@
 mod commands;
 mod events;
 mod pomodoro;
+mod sessions;
 mod state;
 mod tasks;
 

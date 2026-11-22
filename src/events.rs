@@ -173,34 +173,15 @@ pub async fn handle_event(
             }
 
             if let Some(session) = sessions.remove(&(user_id as u64, guild_id as u64)) {
-                let duration = now - session.start_time;
-                if duration > 0 {
-                    sqlx::query!(
-                        "INSERT INTO voice_stats (user_id, guild_id, total_seconds) 
-                         VALUES (?, ?, ?) ON CONFLICT(user_id, guild_id) 
-                         DO UPDATE SET total_seconds = total_seconds + ?",
-                        user_id,
-                        guild_id,
-                        duration,
-                        duration
-                    )
-                    .execute(&data.db)
-                    .await?;
-
-                    if let Some(task_id) = session.active_task_id {
-                        sqlx::query!(
-                            "UPDATE user_tasks 
-                             SET time_spent_seconds = time_spent_seconds + ?,
-                                 record_session_seconds = MAX(record_session_seconds, ?)
-                             WHERE task_id = ?",
-                            duration,
-                            duration,
-                            task_id
-                        )
-                        .execute(&data.db)
-                        .await?;
-                    }
-                }
+                crate::sessions::commit(
+                    &data.db,
+                    user_id,
+                    guild_id,
+                    session.start_time,
+                    session.active_task_id,
+                    now,
+                )
+                .await?;
             }
 
             if is_in_tracked_channel {
@@ -468,61 +449,31 @@ pub async fn handle_event(
                 let mut sessions = data.active_sessions.lock().await;
 
                 if let Some(session) = sessions.get_mut(&(user_id as u64, guild_id as u64)) {
-                    let duration = now - session.start_time;
-
-                    if duration > 0 {
-                        sqlx::query!(
-                            "INSERT INTO voice_stats (user_id, guild_id, total_seconds) 
-                             VALUES (?, ?, ?) ON CONFLICT(user_id, guild_id) 
-                             DO UPDATE SET total_seconds = total_seconds + ?",
-                            user_id,
-                            guild_id,
-                            duration,
-                            duration
-                        )
-                        .execute(&data.db)
-                        .await?;
-
-                        if let Some(old_task_id) = session.active_task_id {
-                            sqlx::query!(
-                                "UPDATE user_tasks 
-                                 SET time_spent_seconds = time_spent_seconds + ?,
-                                     record_session_seconds = MAX(record_session_seconds, ?)
-                                 WHERE task_id = ?",
-                                duration,
-                                duration,
-                                old_task_id
-                            )
-                            .execute(&data.db)
-                            .await?;
-                        }
-                    }
+                    crate::sessions::commit(
+                        &data.db,
+                        user_id,
+                        guild_id,
+                        session.start_time,
+                        session.active_task_id,
+                        now,
+                    )
+                    .await?;
 
                     session.start_time = now;
-                    if selected_value == "none" {
-                        session.active_task_id = None;
-                    } else {
-                        session.active_task_id = Some(selected_value.parse().unwrap());
-                    }
+                    session.active_task_id = selected_value.parse().ok();
                 }
                 drop(sessions);
 
+                let selected_task: Option<i64> = selected_value.parse().ok();
                 sqlx::query!(
-                    "UPDATE user_tasks SET is_last_selected = 0 WHERE user_id = ?",
+                    "UPDATE user_tasks SET is_last_selected = (task_id IS ?) WHERE user_id = ?",
+                    selected_task,
                     user_id
                 )
                 .execute(&data.db)
                 .await?;
 
-                let selected_desc = if selected_value != "none" {
-                    let task_id: i64 = selected_value.parse().unwrap();
-                    sqlx::query!(
-                        "UPDATE user_tasks SET is_last_selected = 1 WHERE task_id = ?",
-                        task_id
-                    )
-                    .execute(&data.db)
-                    .await?;
-
+                let selected_desc = if let Some(task_id) = selected_task {
                     let row = sqlx::query!(
                         "SELECT description FROM user_tasks WHERE task_id = ?",
                         task_id
