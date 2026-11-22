@@ -37,7 +37,9 @@ async fn broadcast_changelogs(
     };
 
     if should_broadcast {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
         let url = format!(
             "https://api.github.com/repos/luccamz/discord-vc-statsmaster/releases/tags/v{}",
             current_version
