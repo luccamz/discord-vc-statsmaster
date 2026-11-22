@@ -158,6 +158,15 @@ pub async fn handle_event(
             let mut sessions = data.active_sessions.lock().await;
             let now = chrono::Utc::now().timestamp();
 
+            // Mute, deafen, stream and video updates keep the channel: leave the session running.
+            let new_channel = new.channel_id.map(|c| c.get());
+            if sessions
+                .get(&(user_id as u64, guild_id as u64))
+                .is_some_and(|s| Some(s.channel_id) == new_channel)
+            {
+                return Ok(());
+            }
+
             let mut is_in_tracked_channel = false;
             let mut current_channel_id = 0;
             if let Some(channel_id_non_zero) = new.channel_id {
@@ -203,6 +212,7 @@ pub async fn handle_event(
                         e.insert(SessionData {
                             start_time: now,
                             active_task_id: None,
+                            channel_id: current_channel_id as u64,
                         });
                         return Ok(());
                     }
@@ -220,6 +230,7 @@ pub async fn handle_event(
                     e.insert(SessionData {
                         start_time: now,
                         active_task_id: initial_task_id,
+                        channel_id: current_channel_id as u64,
                     });
 
                     drop(sessions);
@@ -276,7 +287,11 @@ pub async fn handle_event(
                             let mut collector =
                                 serenity::collector::collect(&shard_messenger, move |event| {
                                     if let serenity::Event::VoiceStateUpdate(data) = event {
-                                        if data.voice_state.user_id.get() as i64 == user_id {
+                                        let state = &data.voice_state;
+                                        if state.user_id.get() as i64 == user_id
+                                            && state.channel_id.map(|c| c.get() as i64)
+                                                != Some(current_channel_id)
+                                        {
                                             return Some(());
                                         }
                                     }

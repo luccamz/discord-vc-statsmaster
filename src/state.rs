@@ -6,6 +6,7 @@ use tokio::sync::{Mutex, Notify};
 pub struct SessionData {
     pub start_time: i64,
     pub active_task_id: Option<i64>,
+    pub channel_id: u64,
 }
 
 pub struct Pomodoro {
