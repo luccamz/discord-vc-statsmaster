@@ -129,6 +129,21 @@ pub async fn leaderboard(
 pub async fn cancel_session(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
     let guild_id = ctx.guild_id().unwrap().get();
+    let no_session = poise::CreateReply::default()
+        .content("You have no session to cancel.")
+        .ephemeral(true);
+
+    let has_session = ctx
+        .data()
+        .active_sessions
+        .lock()
+        .await
+        .get(&(user_id, guild_id))
+        .is_some_and(|s| s.counted);
+    if !has_session {
+        ctx.send(no_session).await?;
+        return Ok(());
+    }
 
     let components = vec![serenity::CreateActionRow::Buttons(vec![
         serenity::CreateButton::new("confirm_cancel")
@@ -154,17 +169,30 @@ pub async fn cancel_session(ctx: Context<'_>) -> Result<(), Error> {
         .await
     {
         if mci.data.custom_id == "confirm_cancel" {
-            let mut sessions = ctx.data().active_sessions.lock().await;
-
-            if let Some(session) = sessions.get_mut(&(user_id, guild_id)) {
-                session.counted = false;
-            }
+            let cancelled = match ctx
+                .data()
+                .active_sessions
+                .lock()
+                .await
+                .get_mut(&(user_id, guild_id))
+            {
+                Some(session) if session.counted => {
+                    session.counted = false;
+                    true
+                }
+                _ => false,
+            };
+            let content = if cancelled {
+                "Session cancelled!"
+            } else {
+                "You have no session to cancel."
+            };
 
             mci.create_response(
                 ctx,
                 serenity::CreateInteractionResponse::UpdateMessage(
                     serenity::CreateInteractionResponseMessage::new()
-                        .content("Session cancelled!")
+                        .content(content)
                         .components(vec![]),
                 ),
             )
