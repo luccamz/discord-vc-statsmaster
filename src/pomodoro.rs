@@ -1,5 +1,5 @@
 use crate::commands::tasks::{pending_tasks, task_menu};
-use crate::state::{Pomodoro, Pomodoros};
+use crate::state::{Pomodoro, Pomodoros, Prompts};
 use poise::serenity_prelude::{self as serenity, ChannelId, GuildId, Http, UserId};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,6 +15,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 pub enum Control {
     Pause(u32),
     Resume(u32),
+    Stop,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +45,8 @@ pub struct Config {
     pub pause: Duration,
     pub reps: Option<u32>,
     pub db: sqlx::SqlitePool,
+    pub shard: serenity::ShardMessenger,
+    pub prompts: Prompts,
 }
 
 impl Config {
@@ -245,10 +248,21 @@ async fn count_work_cycle(cfg: &Config) {
 enum Waited {
     Elapsed,
     Paused(Duration),
+    Stopped,
     Cancelled,
 }
 
-/// Sleeps until `duration` passes. Only a `Pause` for `pausable` stops it early; other
+/// How a phase ended.
+enum Step {
+    Next,
+    Ended,
+    /// Back to normal mode; `in_lobby` tells where the user was.
+    Stop {
+        in_lobby: bool,
+    },
+}
+
+/// Sleeps until `duration` passes. `Stop`, or a `Pause` for `pausable`, ends it early; other
 /// messages are dropped without moving the deadline.
 async fn wait(
     rx: &mut UnboundedReceiver<Control>,
@@ -261,6 +275,7 @@ async fn wait(
             _ = tokio::time::sleep_until(deadline) => return Waited::Elapsed,
             msg = rx.recv() => match msg {
                 None => return Waited::Cancelled,
+                Some(Control::Stop) => return Waited::Stopped,
                 Some(Control::Pause(round)) if Some(round) == pausable => {
                     return Waited::Paused(deadline.saturating_duration_since(Instant::now()));
                 }
@@ -270,14 +285,33 @@ async fn wait(
     }
 }
 
-async fn wait_resume(rx: &mut UnboundedReceiver<Control>, round: u32) -> bool {
+/// Waits for `Resume` for `round`; `Elapsed` means resumed.
+async fn wait_resume(rx: &mut UnboundedReceiver<Control>, round: u32) -> Waited {
     loop {
         match rx.recv().await {
-            None => return false,
-            Some(Control::Resume(r)) if r == round => return true,
+            None => return Waited::Cancelled,
+            Some(Control::Stop) => return Waited::Stopped,
+            Some(Control::Resume(r)) if r == round => return Waited::Elapsed,
             Some(_) => {}
         }
     }
+}
+
+fn button(
+    cfg: &Config,
+    id: u64,
+    action: &str,
+    round: u32,
+    label: &str,
+    style: serenity::ButtonStyle,
+) -> serenity::CreateButton {
+    serenity::CreateButton::new(format!("pomo_{action}_{}_{id}_{round}", cfg.user))
+        .label(label)
+        .style(style)
+}
+
+fn stop_button(cfg: &Config, id: u64) -> serenity::CreateButton {
+    button(cfg, id, "stop", 0, "⏹ Stop", serenity::ButtonStyle::Danger)
 }
 
 /// Progress like `● ● ◐ ○` for runs of up to 12 rounds; `done` counts finished work cycles.
@@ -297,11 +331,8 @@ fn round_dots(reps: Option<u32>, done: u32, in_progress: bool) -> String {
     }
 }
 
-/// The task dropdown, when there are pending tasks, above the pause button.
-async fn work_components(
-    cfg: &Config,
-    pause: serenity::CreateButton,
-) -> Vec<serenity::CreateActionRow> {
+/// The task dropdown, when there are pending tasks, above the pause and stop buttons.
+async fn work_components(cfg: &Config, id: u64, round: u32) -> Vec<serenity::CreateActionRow> {
     let user_id = cfg.user.get() as i64;
     let tasks = pending_tasks(&cfg.db, user_id).await.unwrap_or_default();
     let mut rows = Vec::new();
@@ -310,7 +341,18 @@ async fn work_components(
         let menu = task_menu(format!("pomo_task_{user_id}"), &tasks, selected);
         rows.push(serenity::CreateActionRow::SelectMenu(menu));
     }
-    rows.push(serenity::CreateActionRow::Buttons(vec![pause]));
+    let pause = button(
+        cfg,
+        id,
+        "pause",
+        round,
+        "⏸ Pause",
+        serenity::ButtonStyle::Secondary,
+    );
+    rows.push(serenity::CreateActionRow::Buttons(vec![
+        pause,
+        stop_button(cfg, id),
+    ]));
     rows
 }
 
@@ -318,22 +360,19 @@ fn ends_at(duration: Duration) -> i64 {
     chrono::Utc::now().timestamp() + duration.as_secs() as i64
 }
 
-/// Runs one work cycle, with any number of pauses. Returns false if the run ended.
+/// Runs one work cycle, with any number of pauses.
 async fn work(
     cfg: &Config,
     id: u64,
     rx: &mut UnboundedReceiver<Control>,
     round: u32,
     last: bool,
-) -> bool {
+) -> Step {
     let rounds = cfg.reps.map_or("∞".to_string(), |r| r.to_string());
     let mut remaining = cfg.work;
     let mut notice = "🍅 Started work";
     loop {
         let next = if last { "done" } else { "break" };
-        let pause = serenity::CreateButton::new(format!("pomo_pause_{}_{id}_{round}", cfg.user))
-            .label("⏸ Pause")
-            .style(serenity::ButtonStyle::Secondary);
         let status = Status {
             channel: cfg.work_channel,
             notice,
@@ -344,30 +383,36 @@ async fn work(
                 ends_at(remaining),
                 round_dots(cfg.reps, round - 1, true)
             ),
-            components: work_components(cfg, pause).await,
+            components: work_components(cfg, id, round).await,
         };
         if !announce(cfg, id, status).await {
-            return false;
+            return Step::Ended;
         }
 
         match wait(rx, remaining, Some(round)).await {
-            Waited::Cancelled => return false,
+            Waited::Cancelled => return Step::Ended,
+            Waited::Stopped => return Step::Stop { in_lobby: false },
             Waited::Elapsed => {
-                let alive = update_own(cfg, id, |_| ());
-                if alive {
-                    count_work_cycle(cfg).await;
+                if !update_own(cfg, id, |_| ()) {
+                    return Step::Ended;
                 }
-                return alive;
+                count_work_cycle(cfg).await;
+                return Step::Next;
             }
             Waited::Paused(left) => remaining = left,
         }
 
         if !move_user(cfg, id, cfg.work_channel, cfg.lobby).await {
-            return false;
+            return Step::Ended;
         }
-        let resume = serenity::CreateButton::new(format!("pomo_resume_{}_{id}_{round}", cfg.user))
-            .label("▶ Resume")
-            .style(serenity::ButtonStyle::Success);
+        let resume = button(
+            cfg,
+            id,
+            "resume",
+            round,
+            "▶ Resume",
+            serenity::ButtonStyle::Success,
+        );
         let secs = remaining.as_secs();
         let status = Status {
             channel: cfg.lobby,
@@ -380,19 +425,27 @@ async fn work(
                 secs % 60,
                 round_dots(cfg.reps, round - 1, true)
             ),
-            components: vec![serenity::CreateActionRow::Buttons(vec![resume])],
+            components: vec![serenity::CreateActionRow::Buttons(vec![
+                resume,
+                stop_button(cfg, id),
+            ])],
         };
-        if !announce(cfg, id, status).await
-            || !wait_resume(rx, round).await
-            || !move_user(cfg, id, cfg.lobby, cfg.work_channel).await
-        {
-            return false;
+        if !announce(cfg, id, status).await {
+            return Step::Ended;
+        }
+        match wait_resume(rx, round).await {
+            Waited::Elapsed => {}
+            Waited::Stopped => return Step::Stop { in_lobby: true },
+            _ => return Step::Ended,
+        }
+        if !move_user(cfg, id, cfg.lobby, cfg.work_channel).await {
+            return Step::Ended;
         }
         notice = "🍅 Resumed work";
     }
 }
 
-async fn take_break(cfg: &Config, id: u64, rx: &mut UnboundedReceiver<Control>, done: u32) -> bool {
+async fn take_break(cfg: &Config, id: u64, rx: &mut UnboundedReceiver<Control>, done: u32) -> Step {
     let status = Status {
         channel: cfg.lobby,
         notice: "☕ Started break",
@@ -403,24 +456,64 @@ async fn take_break(cfg: &Config, id: u64, rx: &mut UnboundedReceiver<Control>, 
             ends_at(cfg.pause),
             round_dots(cfg.reps, done, false)
         ),
-        components: Vec::new(),
+        components: vec![serenity::CreateActionRow::Buttons(vec![stop_button(
+            cfg, id,
+        )])],
     };
-    announce(cfg, id, status).await && matches!(wait(rx, cfg.pause, None).await, Waited::Elapsed)
+    if !announce(cfg, id, status).await {
+        return Step::Ended;
+    }
+    match wait(rx, cfg.pause, None).await {
+        Waited::Elapsed => Step::Next,
+        Waited::Stopped => Step::Stop { in_lobby: true },
+        _ => Step::Ended,
+    }
+}
+
+/// Ends the run on the user's request and leaves them tracked in their work channel.
+async fn back_to_normal(cfg: &Config, id: u64, in_lobby: bool) {
+    // Remove first so the move back is treated as a plain join, which posts the task prompt.
+    if !finish(cfg, id) {
+        return;
+    }
+    if in_lobby {
+        let _ = cfg
+            .guild
+            .move_member(&*cfg.http, cfg.user, cfg.work_channel)
+            .await;
+        return;
+    }
+    let user_id = cfg.user.get() as i64;
+    let tasks = pending_tasks(&cfg.db, user_id).await.unwrap_or_default();
+    if !tasks.is_empty() {
+        crate::prompt::post_task_prompt(
+            &cfg.http,
+            &cfg.shard,
+            &cfg.prompts,
+            cfg.key(),
+            cfg.work_channel.get() as i64,
+            &tasks,
+            true,
+        )
+        .await;
+    }
 }
 
 async fn run(cfg: Config, id: u64, mut rx: UnboundedReceiver<Control>) {
     let mut phases = phase_sequence(cfg.reps).peekable();
     let mut round = 0;
     while let Some(phase) = phases.next() {
-        let completed = match phase {
+        let step = match phase {
             Phase::Work => {
                 round += 1;
                 work(&cfg, id, &mut rx, round, phases.peek().is_none()).await
             }
             Phase::Pause => take_break(&cfg, id, &mut rx, round).await,
         };
-        if !completed {
-            return;
+        match step {
+            Step::Next => {}
+            Step::Ended => return,
+            Step::Stop { in_lobby } => return back_to_normal(&cfg, id, in_lobby).await,
         }
 
         let Some(&next) = phases.peek() else { break };
@@ -500,7 +593,7 @@ mod tests {
             wait(&mut rx, Duration::from_secs(60), None).await,
             Waited::Cancelled
         ));
-        assert!(!wait_resume(&mut rx, 1).await);
+        assert!(matches!(wait_resume(&mut rx, 1).await, Waited::Cancelled));
     }
 
     #[test]
@@ -510,5 +603,19 @@ mod tests {
         assert_eq!(round_dots(Some(1), 0, true), "\n◐");
         assert_eq!(round_dots(Some(13), 0, true), "");
         assert_eq!(round_dots(None, 5, true), "");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stop_ends_both_waits() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(Control::Resume(9)).unwrap();
+        tx.send(Control::Stop).unwrap();
+        assert!(matches!(
+            wait(&mut rx, Duration::from_secs(60), Some(1)).await,
+            Waited::Stopped
+        ));
+        tx.send(Control::Pause(1)).unwrap();
+        tx.send(Control::Stop).unwrap();
+        assert!(matches!(wait_resume(&mut rx, 1).await, Waited::Stopped));
     }
 }

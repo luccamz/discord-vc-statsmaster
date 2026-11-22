@@ -76,12 +76,14 @@ pub async fn pomodoro(
         pause: Duration::from_secs(pause as u64 * 60),
         reps: repetitions,
         db: ctx.data().db.clone(),
+        shard: ctx.serenity_context().shard.clone(),
+        prompts: ctx.data().prompts.clone(),
     });
 
     let rounds = repetitions.map_or("∞".to_string(), |r| r.to_string());
     reply_private(ctx,
         format!(
-            "🍅 Pomodoro started: {work} min work, {pause} min pause, {rounds} rounds. Use ⏸ on the timer to pause; leave or switch channels to stop."
+            "🍅 Pomodoro started: {work} min work, {pause} min pause, {rounds} rounds. Use ⏸ to pause and ⏹ to go back to normal mode."
         ),
     )
     .await?;
