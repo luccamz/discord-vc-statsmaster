@@ -394,15 +394,16 @@ pub async fn build_todo(
     let mut lines: Vec<String> = Vec::new();
     let mut section = "";
 
-    for chunk in tasks.chunks(5) {
+    for (chunk_index, chunk) in tasks.chunks(5).enumerate() {
         let mut buttons = Vec::new();
-        for task in chunk {
-            let (header, icon, prefix, style) = if task.terminated_at.is_some() {
-                ("**Expired**", "⛔", "[-]", serenity::ButtonStyle::Danger)
+        for (offset, task) in chunk.iter().enumerate() {
+            let number = chunk_index * 5 + offset + 1;
+            let (header, icon, style) = if task.terminated_at.is_some() {
+                ("**Expired**", "⛔", serenity::ButtonStyle::Danger)
             } else if task.completed_at.is_some() {
-                ("**Done**", "✅", "[x]", serenity::ButtonStyle::Success)
+                ("**Done**", "✅", serenity::ButtonStyle::Success)
             } else {
-                ("**Pending**", "⬜", "[ ]", serenity::ButtonStyle::Secondary)
+                ("**Pending**", "⬜", serenity::ButtonStyle::Secondary)
             };
 
             if header != section {
@@ -413,26 +414,22 @@ pub async fn build_todo(
                 section = header;
             }
             let time = format_duration(task.time_spent_seconds);
-            let mut line = format!("{icon} {} · {time}", truncate(&task.description, 80));
+            let mut line = format!(
+                "`{number:>2}` {icon} {} · {time}",
+                truncate(&task.description, 80)
+            );
             if let (Some(deadline), None) = (task.deadline, task.completed_at) {
                 line.push_str(&format!(" · due <t:{deadline}:R>"));
             }
             lines.push(line);
 
-            // Deadlines live in the embed, where Discord keeps the relative time current.
-            let time_str = format!(" ({time})");
-            let max_desc_len = 80 - prefix.len() - 1 - time_str.chars().count();
-            let label = format!(
-                "{prefix} {}{time_str}",
-                truncate(&task.description, max_desc_len)
-            );
-
+            // Buttons carry only the number; the embed line holds the details.
             let button = serenity::CreateButton::new(format!(
                 "task_toggle_{}_{}",
                 task.task_id.unwrap(),
                 user_id
             ))
-            .label(label)
+            .label(number.to_string())
             .style(style)
             .disabled(task.terminated_at.is_some());
 
@@ -464,9 +461,7 @@ pub async fn todo(ctx: Context<'_>) -> Result<(), Error> {
     }
 
     let reply = poise::CreateReply::default()
-        .content(
-            "Here is your interactive todo list. Click a task to toggle its completion status.",
-        )
+        .content("Here is your interactive todo list. Click a number to toggle that task.")
         .embed(embed)
         .components(components)
         .ephemeral(true);
