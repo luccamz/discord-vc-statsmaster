@@ -1,17 +1,16 @@
-use crate::state::Error;
+use crate::state::{Error, SessionData};
 use sqlx::SqlitePool;
 
-/// Adds the time since `start` to the user's weekly total and to the active task, atomically.
+/// Adds the session's time to the user's weekly total and to the active task, atomically.
 pub async fn commit(
     db: &SqlitePool,
     user_id: i64,
     guild_id: i64,
-    start: i64,
-    task_id: Option<i64>,
+    session: &SessionData,
     now: i64,
 ) -> Result<(), Error> {
-    let duration = now - start;
-    if duration <= 0 {
+    let duration = now - session.start_time;
+    if !session.counted || duration <= 0 {
         return Ok(());
     }
 
@@ -28,7 +27,7 @@ pub async fn commit(
     .execute(&mut *tx)
     .await?;
 
-    if let Some(task_id) = task_id {
+    if let Some(task_id) = session.active_task_id {
         sqlx::query!(
             "UPDATE user_tasks 
              SET time_spent_seconds = time_spent_seconds + ?,

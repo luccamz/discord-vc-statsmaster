@@ -134,7 +134,9 @@ pub async fn cancel_session(ctx: Context<'_>) -> Result<(), Error> {
         if mci.data.custom_id == "confirm_cancel" {
             let mut sessions = ctx.data().active_sessions.lock().await;
 
-            sessions.remove(&(user_id, guild_id));
+            if let Some(session) = sessions.get_mut(&(user_id, guild_id)) {
+                session.counted = false;
+            }
 
             mci.create_response(
                 ctx,

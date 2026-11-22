@@ -3,10 +3,13 @@ use sqlx::SqlitePool;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, Notify};
 
+#[derive(Clone, Copy)]
 pub struct SessionData {
     pub start_time: i64,
     pub active_task_id: Option<i64>,
     pub channel_id: u64,
+    /// False after `/cancel_session`: the time is dropped until the user changes channel.
+    pub counted: bool,
 }
 
 pub struct Pomodoro {

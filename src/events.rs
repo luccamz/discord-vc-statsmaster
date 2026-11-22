@@ -213,6 +213,7 @@ pub async fn handle_event(
                             start_time: now,
                             active_task_id: initial_task_id,
                             channel_id: current_channel_id as u64,
+                            counted: true,
                         },
                     );
                 }
@@ -220,15 +221,7 @@ pub async fn handle_event(
             };
 
             if let Some(session) = old {
-                crate::sessions::commit(
-                    &data.db,
-                    user_id,
-                    guild_id,
-                    session.start_time,
-                    session.active_task_id,
-                    now,
-                )
-                .await?;
+                crate::sessions::commit(&data.db, user_id, guild_id, &session, now).await?;
             }
 
             // Prompt only when there is a task to choose from.
@@ -464,15 +457,14 @@ pub async fn handle_event(
                     .await
                     .get_mut(&(user_id as u64, guild_id as u64))
                     .map(|session| {
-                        let previous = (session.start_time, session.active_task_id);
+                        let previous = *session;
                         session.start_time = now;
                         session.active_task_id = selected_value.parse().ok();
                         previous
                     });
 
-                if let Some((start, task_id)) = previous {
-                    crate::sessions::commit(&data.db, user_id, guild_id, start, task_id, now)
-                        .await?;
+                if let Some(previous) = previous {
+                    crate::sessions::commit(&data.db, user_id, guild_id, &previous, now).await?;
                 }
 
                 let selected_task: Option<i64> = selected_value.parse().ok();
