@@ -1,3 +1,5 @@
+use crate::commands::tasks::format_duration;
+use crate::commands::tracking::rank_line;
 use crate::state::{Error, SessionData};
 use chrono::{DateTime, Datelike, NaiveTime, Utc};
 use poise::serenity_prelude as serenity;
@@ -70,6 +72,13 @@ async fn perform_guild_reset(
         .fetch_all(&mut *tx)
         .await?;
 
+    let server_total = sqlx::query_scalar!(
+        r#"SELECT COALESCE(SUM(total_seconds), 0) AS "total!: i64" FROM voice_stats WHERE guild_id = ?"#,
+        guild_id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
     sqlx::query!(
         "UPDATE voice_stats
         SET total_seconds = 0,
@@ -83,36 +92,42 @@ async fn perform_guild_reset(
     tx.commit().await?;
     drop(sessions);
 
-    let mut message = format!("**Weekly Voice Leaderboard (Week {})**\n", new_weeks);
-
-    if records.is_empty() {
-        message.push_str("No voice activity recorded this week.");
+    let description = if records.is_empty() {
+        "No voice activity recorded this week.".to_string()
     } else {
-        for (index, record) in records.into_iter().enumerate() {
-            let user_id: i64 = record.user_id;
-            let total_seconds: i64 = record.total_seconds;
-            let hours = total_seconds / 3600;
-            let minutes = (total_seconds % 3600) / 60;
-            message.push_str(&format!(
-                "{}. <@{}>: {}h {}m",
-                index + 1,
-                user_id,
-                hours,
-                minutes
-            ));
-            if record.work_cycles > 0 {
-                message.push_str(&format!(" · 🍅 {}", record.work_cycles));
-            }
-            if total_seconds > record.personal_record {
-                message.push_str(" - New personal record!\n");
-            } else {
-                message.push('\n');
-            }
-        }
-    }
+        records
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let line = rank_line(i + 1, r.user_id, r.total_seconds, r.work_cycles);
+                if r.total_seconds > r.personal_record {
+                    format!("{line} · 🏅 new PR")
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let embed = serenity::CreateEmbed::new()
+        .title(format!("📊 Weekly Leaderboard · Week {new_weeks}"))
+        .description(description)
+        .footer(serenity::CreateEmbedFooter::new(format!(
+            "Server total: {}",
+            format_duration(server_total)
+        )))
+        .color(0xF1C40F);
 
+    // Embeds do not ping, so the ranked users are mentioned in the content.
+    let mentions: Vec<String> = records
+        .iter()
+        .map(|r| format!("<@{}>", r.user_id))
+        .collect();
+    let mut builder = serenity::CreateMessage::new().embed(embed);
+    if !mentions.is_empty() {
+        builder = builder.content(format!("Week {new_weeks} is over! {}", mentions.join(" ")));
+    }
     let channel = serenity::ChannelId::new(channel_id as u64);
-    let builder = serenity::CreateMessage::new().content(message);
     let _ = channel.send_message(http, builder).await;
 
     Ok(())
