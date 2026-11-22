@@ -1,17 +1,8 @@
+use crate::commands::reply_private;
 use crate::pomodoro::{self, Config};
 use crate::state::{Context, Error};
 use poise::serenity_prelude as serenity;
 use std::time::Duration;
-
-async fn reply(ctx: Context<'_>, content: impl Into<String>) -> Result<(), Error> {
-    ctx.send(
-        poise::CreateReply::default()
-            .content(content)
-            .ephemeral(true),
-    )
-    .await?;
-    Ok(())
-}
 
 async fn is_tracked(ctx: Context<'_>, channel: serenity::ChannelId) -> Result<bool, Error> {
     let channel_id = channel.get() as i64;
@@ -48,10 +39,10 @@ pub async fn pomodoro(
         .and_then(|g| g.voice_states.get(&user).and_then(|v| v.channel_id));
 
     let Some(work_channel) = current else {
-        return reply(ctx, "Join a tracked voice channel first.").await;
+        return reply_private(ctx, "Join a tracked voice channel first.").await;
     };
     if !is_tracked(ctx, work_channel).await? {
-        return reply(ctx, "Pomodoro mode only works in tracked voice channels.").await;
+        return reply_private(ctx, "Pomodoro mode only works in tracked voice channels.").await;
     }
 
     let lobby = crate::commands::config::pomodoro_lobby(&ctx.data().db, guild.get() as i64)
@@ -59,14 +50,14 @@ pub async fn pomodoro(
         .map(|id| serenity::ChannelId::new(id as u64));
 
     let Some(lobby) = lobby else {
-        return reply(
+        return reply_private(
             ctx,
             "No pomodoro lobby is configured. Ask an admin to run `/config_pomodoro_lobby`.",
         )
         .await;
     };
     if is_tracked(ctx, lobby).await? {
-        return reply(
+        return reply_private(
             ctx,
             "The pomodoro lobby is a tracked channel. Ask an admin to change it.",
         )
@@ -88,8 +79,7 @@ pub async fn pomodoro(
     });
 
     let rounds = repetitions.map_or("∞".to_string(), |r| r.to_string());
-    reply(
-        ctx,
+    reply_private(ctx,
         format!(
             "🍅 Pomodoro started: {work} min work, {pause} min pause, {rounds} rounds. Use ⏸ on the timer to pause; leave or switch channels to stop."
         ),

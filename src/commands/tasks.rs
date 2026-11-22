@@ -411,8 +411,11 @@ pub async fn todo(ctx: Context<'_>) -> Result<(), Error> {
     let components = build_todo_components(&ctx.data().db, user_id).await?;
 
     if components.is_empty() {
-        ctx.say("Your todo list is empty. Use `/add_task` to create one.")
-            .await?;
+        crate::commands::reply_private(
+            ctx,
+            "Your todo list is empty. Use `/add_task` to create one.",
+        )
+        .await?;
         return Ok(());
     }
 
@@ -420,7 +423,8 @@ pub async fn todo(ctx: Context<'_>) -> Result<(), Error> {
         .content(
             "Here is your interactive todo list. Click a task to toggle its completion status.",
         )
-        .components(components);
+        .components(components)
+        .ephemeral(true);
 
     ctx.send(reply).await?;
     Ok(())

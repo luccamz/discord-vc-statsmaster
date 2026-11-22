@@ -13,12 +13,15 @@ pub async fn config_schedule(
     #[description = "UTC Offset (e.g., -5 for EST, 2 for CEST)"] utc_offset: i64,
 ) -> Result<(), Error> {
     if !(0..24).contains(&hour) || !(0..60).contains(&minute) {
-        ctx.say("Invalid time constraint. Hour must be 0-23 and minute 0-59.")
-            .await?;
+        crate::commands::reply_private(
+            ctx,
+            "Invalid time constraint. Hour must be 0-23 and minute 0-59.",
+        )
+        .await?;
         return Ok(());
     }
     if !(-12..=14).contains(&utc_offset) {
-        ctx.say("Invalid UTC offset. Must be between -12 and 14.")
+        crate::commands::reply_private(ctx, "Invalid UTC offset. Must be between -12 and 14.")
             .await?;
         return Ok(());
     }
@@ -58,7 +61,7 @@ pub async fn config_schedule(
     .execute(&ctx.data().db)
     .await?;
 
-    ctx.say(format!(
+    crate::commands::reply_private(ctx, format!(
         "Schedule configured. Leaderboard will reset locally every {:?} at {:02}:{:02} (UTC Offset: {}).", 
         day, hour, minute, utc_offset
     )).await?;
@@ -73,7 +76,7 @@ pub async fn config_timezone(
     #[description = "UTC Offset (e.g., -5 for EST, 2 for CEST)"] offset: i64,
 ) -> Result<(), Error> {
     if !(-12..=14).contains(&offset) {
-        ctx.say("Invalid UTC offset. Must be between -12 and 14.")
+        crate::commands::reply_private(ctx, "Invalid UTC offset. Must be between -12 and 14.")
             .await?;
         return Ok(());
     }
@@ -90,10 +93,13 @@ pub async fn config_timezone(
     .await?;
 
     let sign = if offset >= 0 { "+" } else { "" };
-    ctx.say(format!(
-        "Your personal timezone offset has been set to UTC{}{}.",
-        sign, offset
-    ))
+    crate::commands::reply_private(
+        ctx,
+        format!(
+            "Your personal timezone offset has been set to UTC{}{}.",
+            sign, offset
+        ),
+    )
     .await?;
 
     Ok(())
