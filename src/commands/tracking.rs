@@ -1,3 +1,4 @@
+use crate::commands::tasks::format_duration;
 use crate::state::{Context, Error};
 use poise::serenity_prelude as serenity;
 
@@ -70,6 +71,21 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// One leaderboard row, with medals for the top 3.
+pub fn rank_line(rank: usize, user_id: i64, seconds: i64, cycles: i64) -> String {
+    let place = match rank {
+        1 => "🥇".to_string(),
+        2 => "🥈".to_string(),
+        3 => "🥉".to_string(),
+        n => format!("**{n}.**"),
+    };
+    let mut line = format!("{place} <@{user_id}> • {}", format_duration(seconds));
+    if cycles > 0 {
+        line.push_str(&format!(" · 🍅 {cycles}"));
+    }
+    line
+}
+
 /// Displays the top users by voice time. Defaults to top 5 if no limit is provided.
 #[poise::command(slash_command, guild_only)]
 pub async fn leaderboard(
@@ -92,27 +108,39 @@ pub async fn leaderboard(
         return Ok(());
     }
 
-    let mut description = String::new();
+    let author = ctx.author().id.get() as i64;
+    let author_listed = records.iter().any(|r| r.user_id == author);
+    let mut lines: Vec<String> = records
+        .iter()
+        .enumerate()
+        .map(|(i, r)| rank_line(i + 1, r.user_id, r.total_seconds, r.work_cycles))
+        .collect();
 
-    for (index, row) in records.into_iter().enumerate() {
-        let user_id: i64 = row.user_id;
-        let total_seconds: i64 = row.total_seconds;
-
-        let hours = total_seconds / 3600;
-        let minutes = (total_seconds % 3600) / 60;
-
-        description.push_str(&format!(
-            "**{}.** <@{}> • {}h {}m",
-            index + 1,
-            user_id,
-            hours,
-            minutes
-        ));
-        if row.work_cycles > 0 {
-            description.push_str(&format!(" · 🍅 {}", row.work_cycles));
+    if !author_listed {
+        let own = sqlx::query!(
+            r#"SELECT v.total_seconds, v.work_cycles,
+                      (SELECT COUNT(*) FROM voice_stats o
+                       WHERE o.guild_id = v.guild_id
+                         AND (o.total_seconds > v.total_seconds
+                              OR (o.total_seconds = v.total_seconds
+                                  AND o.work_cycles > v.work_cycles))) + 1 AS "rank!: i64"
+               FROM voice_stats v WHERE v.user_id = ? AND v.guild_id = ?"#,
+            author,
+            guild_id
+        )
+        .fetch_optional(&ctx.data().db)
+        .await?;
+        if let Some(own) = own {
+            lines.push("⋯".to_string());
+            lines.push(rank_line(
+                own.rank as usize,
+                author,
+                own.total_seconds,
+                own.work_cycles,
+            ));
         }
-        description.push('\n');
     }
+    let description = lines.join("\n");
 
     let embed = serenity::CreateEmbed::new()
         .title(format!("Top {} Users in Voice Activity", fetch_limit))
