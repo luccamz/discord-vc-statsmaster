@@ -28,6 +28,10 @@ pub async fn handle_event(
 ) -> Result<(), Error> {
     match event {
         serenity::FullEvent::GuildCreate { guild, is_new } => {
+            if let Err(e) = crate::sessions::sync_guild(&ctx.http, data, guild).await {
+                eprintln!("Failed to sync sessions for guild {}: {}", guild.id, e);
+            }
+
             // is_new ensures this only fires when invited, not every time your bot restarts
             if Some(true) == *is_new {
                 // Try to use the server's system channel, fallback to the first available channel

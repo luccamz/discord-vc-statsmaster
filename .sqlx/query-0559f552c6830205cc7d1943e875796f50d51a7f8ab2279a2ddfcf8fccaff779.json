@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT channel_id FROM tracked_channels WHERE guild_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "channel_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0559f552c6830205cc7d1943e875796f50d51a7f8ab2279a2ddfcf8fccaff779"
+}

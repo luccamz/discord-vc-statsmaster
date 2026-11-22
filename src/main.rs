@@ -122,6 +122,8 @@ async fn main() {
 
     let active_sessions: Arc<Mutex<HashMap<(u64, u64), SessionData>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    let shutdown_sessions = active_sessions.clone();
+    let shutdown_db = db.clone();
     let intents =
         serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::GUILD_VOICE_STATES;
 
@@ -187,5 +189,12 @@ async fn main() {
         .await
         .unwrap();
 
+    tokio::spawn(sessions::flush_on_shutdown(
+        shutdown_sessions,
+        shutdown_db.clone(),
+        client.shard_manager.clone(),
+    ));
+
     client.start().await.unwrap();
+    shutdown_db.close().await;
 }

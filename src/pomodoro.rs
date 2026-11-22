@@ -96,6 +96,14 @@ pub fn start(cfg: Config) {
     tokio::spawn(run(cfg, id, cancel));
 }
 
+pub fn users_in_guild(pomodoros: &Pomodoros, guild: u64) -> Vec<(u64, u64)> {
+    lock(pomodoros)
+        .keys()
+        .filter(|&&(_, g)| g == guild)
+        .copied()
+        .collect()
+}
+
 /// Cancels the user's pomodoro if they left the channel it expects them in.
 pub fn on_voice_update(
     http: &Arc<Http>,

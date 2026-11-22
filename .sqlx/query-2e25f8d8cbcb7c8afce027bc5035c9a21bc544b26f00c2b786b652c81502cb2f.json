@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT task_id FROM user_tasks \n             WHERE user_id = ? AND is_last_selected = 1 \n               AND completed_at IS NULL AND terminated_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "task_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "2e25f8d8cbcb7c8afce027bc5035c9a21bc544b26f00c2b786b652c81502cb2f"
+}
