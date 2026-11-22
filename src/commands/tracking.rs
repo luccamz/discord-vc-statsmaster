@@ -68,7 +68,7 @@ pub async fn leaderboard(
     let fetch_limit = limit.unwrap_or(5).clamp(1, 50);
 
     let records = sqlx::query!(
-        "SELECT user_id, total_seconds FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT ?",
+        "SELECT user_id, total_seconds FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC, work_cycles DESC LIMIT ?",
         guild_id,
         fetch_limit
     )

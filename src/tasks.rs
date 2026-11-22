@@ -64,7 +64,7 @@ async fn perform_guild_reset(
     .await?;
 
     let records = sqlx::query!(
-        "SELECT user_id, total_seconds, personal_record, work_cycles FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT 5",
+        "SELECT user_id, total_seconds, personal_record, work_cycles FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC, work_cycles DESC LIMIT 5",
         guild_id
     )
         .fetch_all(&mut *tx)

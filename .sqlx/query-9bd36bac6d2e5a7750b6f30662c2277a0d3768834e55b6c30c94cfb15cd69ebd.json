@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT user_id, total_seconds, personal_record, work_cycles FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT 5",
+  "query": "SELECT user_id, total_seconds, personal_record, work_cycles FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC, work_cycles DESC LIMIT 5",
   "describe": {
     "columns": [
       {
@@ -34,5 +34,5 @@
       false
     ]
   },
-  "hash": "01c77fe17b0579a9018dc53cc23a280596466e2822805acf87f1a99f0abd60c9"
+  "hash": "9bd36bac6d2e5a7750b6f30662c2277a0d3768834e55b6c30c94cfb15cd69ebd"
 }
