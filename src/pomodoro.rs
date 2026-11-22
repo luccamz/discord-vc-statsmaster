@@ -269,6 +269,23 @@ async fn wait_resume(rx: &mut UnboundedReceiver<Control>, round: u32) -> bool {
     }
 }
 
+/// Progress like `● ● ◐ ○` for runs of up to 12 rounds; `done` counts finished work cycles.
+fn round_dots(reps: Option<u32>, done: u32, in_progress: bool) -> String {
+    match reps {
+        Some(total) if total <= 12 => {
+            let dots: Vec<&str> = (0..total)
+                .map(|i| match i.cmp(&done) {
+                    std::cmp::Ordering::Less => "●",
+                    std::cmp::Ordering::Equal if in_progress => "◐",
+                    _ => "○",
+                })
+                .collect();
+            format!("\n{}", dots.join(" "))
+        }
+        _ => String::new(),
+    }
+}
+
 fn ends_at(duration: Duration) -> i64 {
     chrono::Utc::now().timestamp() + duration.as_secs() as i64
 }
@@ -294,7 +311,11 @@ async fn work(
             notice,
             title: format!("🍅 Focus · round {round}/{rounds}"),
             color: 0xE74C3C,
-            body: format!("{next} <t:{}:R>", ends_at(remaining)),
+            body: format!(
+                "{next} <t:{}:R>{}",
+                ends_at(remaining),
+                round_dots(cfg.reps, round - 1, true)
+            ),
             button: Some(pause),
         };
         if !announce(cfg, id, status).await {
@@ -325,7 +346,12 @@ async fn work(
             notice: "⏸ Paused work",
             title: format!("⏸ Paused · round {round}/{rounds}"),
             color: 0x95A5A6,
-            body: format!("{}m {}s of work left", secs / 60, secs % 60),
+            body: format!(
+                "{}m {}s of work left{}",
+                secs / 60,
+                secs % 60,
+                round_dots(cfg.reps, round - 1, true)
+            ),
             button: Some(resume),
         };
         if !announce(cfg, id, status).await
@@ -338,13 +364,17 @@ async fn work(
     }
 }
 
-async fn take_break(cfg: &Config, id: u64, rx: &mut UnboundedReceiver<Control>) -> bool {
+async fn take_break(cfg: &Config, id: u64, rx: &mut UnboundedReceiver<Control>, done: u32) -> bool {
     let status = Status {
         channel: cfg.lobby,
         notice: "☕ Started break",
         title: "☕ Break".to_string(),
         color: 0x2ECC71,
-        body: format!("back to work <t:{}:R>", ends_at(cfg.pause)),
+        body: format!(
+            "back to work <t:{}:R>{}",
+            ends_at(cfg.pause),
+            round_dots(cfg.reps, done, false)
+        ),
         button: None,
     };
     announce(cfg, id, status).await && matches!(wait(rx, cfg.pause, None).await, Waited::Elapsed)
@@ -359,7 +389,7 @@ async fn run(cfg: Config, id: u64, mut rx: UnboundedReceiver<Control>) {
                 round += 1;
                 work(&cfg, id, &mut rx, round, phases.peek().is_none()).await
             }
-            Phase::Pause => take_break(&cfg, id, &mut rx).await,
+            Phase::Pause => take_break(&cfg, id, &mut rx, round).await,
         };
         if !completed {
             return;
@@ -443,5 +473,14 @@ mod tests {
             Waited::Cancelled
         ));
         assert!(!wait_resume(&mut rx, 1).await);
+    }
+
+    #[test]
+    fn round_dots_show_progress() {
+        assert_eq!(round_dots(Some(4), 2, true), "\n● ● ◐ ○");
+        assert_eq!(round_dots(Some(4), 2, false), "\n● ● ○ ○");
+        assert_eq!(round_dots(Some(1), 0, true), "\n◐");
+        assert_eq!(round_dots(Some(13), 0, true), "");
+        assert_eq!(round_dots(None, 5, true), "");
     }
 }
