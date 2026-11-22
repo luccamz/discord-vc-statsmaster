@@ -139,20 +139,26 @@ fn remove_own(cfg: &Config, id: u64) -> Option<Pomodoro> {
     }
 }
 
-/// Posts the phase status in the VC chat and DMs the user. Returns false if cancelled.
+/// Posts the phase status in the VC chat. Returns false if cancelled.
 async fn announce(cfg: &Config, id: u64, phase: Phase, round: u32, last: bool) -> bool {
     let ends = chrono::Utc::now().timestamp() + cfg.duration(phase).as_secs() as i64;
     let rounds = cfg.reps.map_or("∞".to_string(), |r| r.to_string());
-    let (title, color, next) = match phase {
+    let (notice, title, color, next) = match phase {
         Phase::Work => (
+            "🍅 Started work",
             format!("🍅 Focus · round {round}/{rounds}"),
             0xE74C3C,
             if last { "done" } else { "break" },
         ),
-        Phase::Pause => ("☕ Break".to_string(), 0x2ECC71, "back to work"),
+        Phase::Pause => (
+            "☕ Started break",
+            "☕ Break".to_string(),
+            0x2ECC71,
+            "back to work",
+        ),
     };
 
-    // The mention sits in the content because mentions inside embeds do not notify.
+    // Notifications show only the content, not mentions or text inside embeds.
     let embed = serenity::CreateEmbed::new()
         .title(title)
         .description(format!("{next} <t:{ends}:R>"))
@@ -162,7 +168,7 @@ async fn announce(cfg: &Config, id: u64, phase: Phase, round: u32, last: bool) -
         .send_message(
             &*cfg.http,
             serenity::CreateMessage::new()
-                .content(format!("<@{}>", cfg.user))
+                .content(format!("<@{}> {notice}", cfg.user))
                 .embed(embed),
         )
         .await
