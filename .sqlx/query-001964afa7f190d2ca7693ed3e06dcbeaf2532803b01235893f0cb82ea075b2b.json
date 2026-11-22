@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO voice_stats (user_id, guild_id, work_cycles) VALUES (?, ?, 1) \n         ON CONFLICT(user_id, guild_id) DO UPDATE SET work_cycles = work_cycles + 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "001964afa7f190d2ca7693ed3e06dcbeaf2532803b01235893f0cb82ea075b2b"
+}

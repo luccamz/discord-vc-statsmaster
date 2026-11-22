@@ -8,7 +8,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
 
     let record = sqlx::query!(
-        "SELECT total_seconds, personal_record FROM voice_stats WHERE user_id = ? AND guild_id = ?",
+        "SELECT total_seconds, personal_record, work_cycles FROM voice_stats WHERE user_id = ? AND guild_id = ?",
         user_id,
         guild_id
     )
@@ -39,6 +39,11 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
                     minutes,
                     percent.unwrap_or(9999999.0)
                 ),
+                false,
+            );
+            embed = embed.field(
+                "Work Cycles",
+                format!("🍅 **{}** this week", row.work_cycles),
                 false,
             );
         }
@@ -265,7 +270,7 @@ pub async fn reset_stats(
                     let user_id = u.id.get() as i64;
                     sqlx::query!(
                         "UPDATE voice_stats 
-                        SET total_seconds = 0
+                        SET total_seconds = 0, work_cycles = 0
                         WHERE user_id = ? AND guild_id = ?",
                         user_id,
                         guild_id
@@ -286,7 +291,7 @@ pub async fn reset_stats(
                 None => {
                     sqlx::query!(
                         "UPDATE voice_stats 
-                        SET total_seconds = 0
+                        SET total_seconds = 0, work_cycles = 0
                         WHERE guild_id = ?",
                         guild_id
                     )

@@ -34,6 +34,7 @@ pub struct Config {
     pub work: Duration,
     pub pause: Duration,
     pub reps: Option<u32>,
+    pub db: sqlx::SqlitePool,
 }
 
 impl Config {
@@ -189,6 +190,21 @@ fn finish(cfg: &Config, id: u64) -> bool {
     true
 }
 
+async fn count_work_cycle(cfg: &Config) {
+    let (user_id, guild_id) = (cfg.user.get() as i64, cfg.guild.get() as i64);
+    if let Err(e) = sqlx::query!(
+        "INSERT INTO voice_stats (user_id, guild_id, work_cycles) VALUES (?, ?, 1) 
+         ON CONFLICT(user_id, guild_id) DO UPDATE SET work_cycles = work_cycles + 1",
+        user_id,
+        guild_id
+    )
+    .execute(&cfg.db)
+    .await
+    {
+        eprintln!("Failed to count work cycle for user {}: {}", user_id, e);
+    }
+}
+
 async fn run(cfg: Config, id: u64, cancel: Arc<Notify>) {
     let mut phases = phase_sequence(cfg.reps).peekable();
     let mut round = 0;
@@ -202,6 +218,9 @@ async fn run(cfg: Config, id: u64, cancel: Arc<Notify>) {
         tokio::select! {
             _ = tokio::time::sleep(cfg.duration(phase)) => {}
             _ = cancel.notified() => return,
+        }
+        if phase == Phase::Work && update_own(&cfg, id, |_| ()) {
+            count_work_cycle(&cfg).await;
         }
 
         let Some(&next) = phases.peek() else { break };

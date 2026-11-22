@@ -1,0 +1,1 @@
+ALTER TABLE voice_stats ADD COLUMN work_cycles INTEGER NOT NULL DEFAULT 0;

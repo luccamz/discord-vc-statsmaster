@@ -84,6 +84,7 @@ pub async fn pomodoro(
         work: Duration::from_secs(work as u64 * 60),
         pause: Duration::from_secs(pause as u64 * 60),
         reps: repetitions,
+        db: ctx.data().db.clone(),
     });
 
     let rounds = repetitions.map_or("∞".to_string(), |r| r.to_string());

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT total_seconds, personal_record FROM voice_stats WHERE user_id = ? AND guild_id = ?",
+  "query": "SELECT total_seconds, personal_record, work_cycles FROM voice_stats WHERE user_id = ? AND guild_id = ?",
   "describe": {
     "columns": [
       {
@@ -12,6 +12,11 @@
         "name": "personal_record",
         "ordinal": 1,
         "type_info": "Integer"
+      },
+      {
+        "name": "work_cycles",
+        "ordinal": 2,
+        "type_info": "Integer"
       }
     ],
     "parameters": {
@@ -19,8 +24,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "a430defceaa625f0ef92396b214968de14903b3390faaa55aaa9eeffaf055838"
+  "hash": "fb4b721cf387affbb18c4fc479eddea62a49f7c9b3e8dea8bcce65e55f1cbcbd"
 }

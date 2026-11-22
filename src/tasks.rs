@@ -64,7 +64,7 @@ async fn perform_guild_reset(
     .await?;
 
     let records = sqlx::query!(
-        "SELECT user_id, total_seconds, personal_record FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT 5",
+        "SELECT user_id, total_seconds, personal_record, work_cycles FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT 5",
         guild_id
     )
         .fetch_all(&mut *tx)
@@ -73,6 +73,7 @@ async fn perform_guild_reset(
     sqlx::query!(
         "UPDATE voice_stats
         SET total_seconds = 0,
+        work_cycles = 0,
         personal_record = MAX(personal_record, total_seconds)
         WHERE guild_id = ?",
         guild_id
@@ -99,6 +100,9 @@ async fn perform_guild_reset(
                 hours,
                 minutes
             ));
+            if record.work_cycles > 0 {
+                message.push_str(&format!(" · 🍅 {}", record.work_cycles));
+            }
             if total_seconds > record.personal_record {
                 message.push_str(" - New personal record!\n");
             } else {
