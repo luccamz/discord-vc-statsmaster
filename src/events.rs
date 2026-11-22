@@ -246,6 +246,12 @@ pub async fn handle_event(
                 {
                     let http = ctx.http.clone();
                     let shard_messenger = ctx.shard.clone();
+                    let prompts = data.prompts.clone();
+                    let prompt = (message.channel_id, message.id);
+                    prompts
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(prompt);
 
                     tokio::spawn(async move {
                         use poise::serenity_prelude as serenity;
@@ -272,6 +278,10 @@ pub async fn handle_event(
                         .await;
 
                         let _ = message.delete(&http).await;
+                        prompts
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(&prompt);
                     });
                 }
             }

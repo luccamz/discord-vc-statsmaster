@@ -101,6 +101,14 @@ pub fn control(pomodoros: &Pomodoros, key: (u64, u64), id: u64, msg: Control) ->
         .is_some_and(|p| p.id == id && p.control.send(msg).is_ok())
 }
 
+/// Ends every run and returns the status messages they left.
+pub fn drain_status_messages(pomodoros: &Pomodoros) -> Vec<(ChannelId, serenity::MessageId)> {
+    lock(pomodoros)
+        .drain()
+        .filter_map(|(_, p)| p.status_msg)
+        .collect()
+}
+
 pub fn is_running(pomodoros: &Pomodoros, key: (u64, u64)) -> bool {
     lock(pomodoros).contains_key(&key)
 }

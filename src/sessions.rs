@@ -1,4 +1,4 @@
-use crate::state::{Data, Error, SessionData};
+use crate::state::{Data, Error, Pomodoros, Prompts, SessionData};
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -126,11 +126,15 @@ pub async fn sync_guild(
     Ok(())
 }
 
-/// Commits all open sessions on SIGTERM or Ctrl+C, then stops the shards.
+/// Commits all open sessions on SIGTERM or Ctrl+C, deletes the bot's live messages, then
+/// stops the shards.
 pub async fn flush_on_shutdown(
     sessions: Arc<Mutex<HashMap<(u64, u64), SessionData>>>,
     db: SqlitePool,
     shards: Arc<serenity::ShardManager>,
+    http: Arc<serenity::Http>,
+    pomodoros: Pomodoros,
+    prompts: Prompts,
 ) {
     let mut terminate = signal(SignalKind::terminate()).expect("failed to listen for SIGTERM");
     tokio::select! {
@@ -149,5 +153,19 @@ pub async fn flush_on_shutdown(
             );
         }
     }
+
+    let mut leftovers: Vec<_> = prompts
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain()
+        .collect();
+    leftovers.extend(crate::pomodoro::drain_status_messages(&pomodoros));
+    let cleanup = async {
+        for (channel, msg) in leftovers {
+            let _ = channel.delete_message(&*http, msg).await;
+        }
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), cleanup).await;
+
     shards.shutdown_all().await;
 }

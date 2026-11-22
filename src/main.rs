@@ -130,7 +130,11 @@ async fn main() {
 
     let active_sessions: Arc<Mutex<HashMap<(u64, u64), SessionData>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    let pomodoros: state::Pomodoros = Default::default();
+    let prompts: state::Prompts = Default::default();
     let shutdown_sessions = active_sessions.clone();
+    let shutdown_pomodoros = pomodoros.clone();
+    let shutdown_prompts = prompts.clone();
     let shutdown_db = db.clone();
     let intents =
         serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::GUILD_VOICE_STATES;
@@ -187,7 +191,8 @@ async fn main() {
                 Ok(Data {
                     db,
                     active_sessions,
-                    pomodoros: Default::default(),
+                    pomodoros,
+                    prompts,
                 })
             })
         })
@@ -202,6 +207,9 @@ async fn main() {
         shutdown_sessions,
         shutdown_db.clone(),
         client.shard_manager.clone(),
+        client.http.clone(),
+        shutdown_pomodoros,
+        shutdown_prompts,
     ));
 
     client.start().await.unwrap();
