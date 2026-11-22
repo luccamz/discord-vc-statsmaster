@@ -206,7 +206,7 @@ pub async fn deadline_check_task(db: SqlitePool) {
         interval.tick().await;
         let now = chrono::Utc::now().timestamp();
 
-        let _ = sqlx::query!(
+        if let Err(e) = sqlx::query!(
             "UPDATE user_tasks 
              SET terminated_at = ?, 
                  is_last_selected = 0 
@@ -217,20 +217,27 @@ pub async fn deadline_check_task(db: SqlitePool) {
             now
         )
         .execute(&db)
-        .await;
+        .await
+        {
+            eprintln!("Failed to terminate overdue tasks: {}", e);
+        }
 
-        let _ = sqlx::query!(
-            "DELETE FROM user_tasks 
-             WHERE terminated_at IS NOT NULL 
-             AND task_id NOT IN (
-                 SELECT task_id FROM user_tasks 
-                 WHERE terminated_at IS NOT NULL 
-                 ORDER BY terminated_at DESC 
-                 LIMIT 500 -- Global retention limit across all users
+        // Keep the 20 latest terminated tasks per user, like completed tasks.
+        if let Err(e) = sqlx::query!(
+            "DELETE FROM user_tasks WHERE task_id IN (
+                 SELECT task_id FROM (
+                     SELECT task_id, ROW_NUMBER() OVER (
+                         PARTITION BY user_id ORDER BY terminated_at DESC
+                     ) AS rn
+                     FROM user_tasks WHERE terminated_at IS NOT NULL
+                 ) WHERE rn > 20
              )"
         )
         .execute(&db)
-        .await;
+        .await
+        {
+            eprintln!("Failed to trim terminated tasks: {}", e);
+        }
     }
 }
 
