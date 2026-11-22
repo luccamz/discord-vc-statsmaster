@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT description, time_spent_seconds FROM user_tasks \n         WHERE user_id = ? AND is_last_selected = 1 LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "description",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "time_spent_seconds",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "9ad4eb07d4654429ebca4055602be22f13eaaa1ab5b7e5d044cf4f8669530d74"
+}

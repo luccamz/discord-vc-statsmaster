@@ -52,6 +52,25 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         }
     }
 
+    let last_task = sqlx::query!(
+        "SELECT description, time_spent_seconds FROM user_tasks 
+         WHERE user_id = ? AND is_last_selected = 1 LIMIT 1",
+        user_id
+    )
+    .fetch_optional(&ctx.data().db)
+    .await?;
+    if let Some(task) = last_task {
+        embed = embed.field(
+            "Last Working On",
+            format!(
+                "📌 {} ({})",
+                task.description,
+                crate::commands::tasks::format_duration(task.time_spent_seconds)
+            ),
+            false,
+        );
+    }
+
     let reply = poise::CreateReply::default().embed(embed);
     ctx.send(reply).await?;
 
