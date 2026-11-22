@@ -138,6 +138,7 @@ async fn main() {
                 delete_tasks(),
                 config_timezone(),
                 config_changelogs(),
+                config_pomodoro_lobby(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {

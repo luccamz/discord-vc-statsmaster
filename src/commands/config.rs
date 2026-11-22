@@ -126,3 +126,47 @@ pub async fn config_changelogs(
 
     Ok(())
 }
+
+/// Configures the voice channel used as the pomodoro pause lobby.
+#[poise::command(slash_command, guild_only, required_permissions = "ADMINISTRATOR")]
+pub async fn config_pomodoro_lobby(
+    ctx: Context<'_>,
+    #[description = "Voice channel for pomodoro pauses"]
+    #[channel_types("Voice")]
+    channel: serenity::GuildChannel,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let channel_id = channel.id.get() as i64;
+
+    let tracked = sqlx::query!(
+        "SELECT channel_id FROM tracked_channels WHERE channel_id = ?",
+        channel_id
+    )
+    .fetch_optional(&ctx.data().db)
+    .await?;
+
+    let content = if tracked.is_some() {
+        "A tracked channel cannot be the pomodoro lobby.".to_string()
+    } else {
+        sqlx::query!(
+            "INSERT INTO guild_settings (guild_id, announcement_channel_id, pomodoro_lobby_channel_id) 
+             VALUES (?, 0, ?) 
+             ON CONFLICT(guild_id) DO UPDATE SET 
+             pomodoro_lobby_channel_id = excluded.pomodoro_lobby_channel_id",
+            guild_id,
+            channel_id
+        )
+        .execute(&ctx.data().db)
+        .await?;
+        format!("Pomodoro pauses will now happen in <#{}>.", channel_id)
+    };
+
+    ctx.send(
+        poise::CreateReply::default()
+            .content(content)
+            .ephemeral(true),
+    )
+    .await?;
+
+    Ok(())
+}

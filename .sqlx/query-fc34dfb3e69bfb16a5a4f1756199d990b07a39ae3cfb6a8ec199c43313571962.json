@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO guild_settings (guild_id, announcement_channel_id, pomodoro_lobby_channel_id) \n             VALUES (?, 0, ?) \n             ON CONFLICT(guild_id) DO UPDATE SET \n             pomodoro_lobby_channel_id = excluded.pomodoro_lobby_channel_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "fc34dfb3e69bfb16a5a4f1756199d990b07a39ae3cfb6a8ec199c43313571962"
+}
