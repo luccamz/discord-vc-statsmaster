@@ -120,28 +120,33 @@ pub async fn handle_event(
         }
         serenity::FullEvent::GuildDelete { incomplete, .. } => {
             if !incomplete.unavailable {
-                let guild_id = incomplete.id.get() as i64;
+                let guild = incomplete.id.get();
+                let guild_id = guild as i64;
 
-                // Delete the accumulated voice statistics
-                let stats_cleanup =
-                    sqlx::query!("DELETE FROM voice_stats WHERE guild_id = ?", guild_id)
-                        .execute(&data.db)
-                        .await;
-
-                if let Err(e) = stats_cleanup {
-                    eprintln!(
-                        "Failed to clean up voice_stats for guild {}: {}",
-                        guild_id, e
-                    );
+                // Drop in-memory state first so that nothing writes this guild's rows back.
+                data.active_sessions
+                    .lock()
+                    .await
+                    .retain(|&(_, g), _| g != guild);
+                for key in crate::pomodoro::users_in_guild(&data.pomodoros, guild) {
+                    crate::pomodoro::on_voice_update(&ctx.http, &data.pomodoros, key, None);
                 }
 
-                let result =
+                let cleanup = async {
+                    let mut tx = data.db.begin().await?;
+                    sqlx::query!("DELETE FROM voice_stats WHERE guild_id = ?", guild_id)
+                        .execute(&mut *tx)
+                        .await?;
                     sqlx::query!("DELETE FROM guild_settings WHERE guild_id = ?", guild_id)
-                        .execute(&data.db)
-                        .await;
-
-                if let Err(e) = result {
-                    eprintln!("Failed to clean up guild settings for {}: {}", guild_id, e);
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query!("DELETE FROM tracked_channels WHERE guild_id = ?", guild_id)
+                        .execute(&mut *tx)
+                        .await?;
+                    tx.commit().await
+                };
+                if let Err(e) = cleanup.await {
+                    eprintln!("Failed to clean up data for guild {}: {}", guild_id, e);
                 }
             }
         }
