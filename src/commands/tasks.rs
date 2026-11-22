@@ -3,6 +3,17 @@ use chrono::TimeZone;
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
 
+/// Shortens `s` to at most `max` characters, ending with "..." when cut.
+pub fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut cut: String = s.chars().take(max.saturating_sub(3)).collect();
+        cut.push_str("...");
+        cut
+    }
+}
+
 async fn parse_deadline(
     db: &sqlx::SqlitePool,
     user_id: i64,
@@ -214,11 +225,7 @@ pub async fn pending_tasks_autocomplete(
         .map(|task| {
             let task_id = task.task_id.unwrap_or(0);
 
-            let safe_desc = if task.description.len() > 80 {
-                format!("{}...", &task.description[..80])
-            } else {
-                task.description
-            };
+            let safe_desc = truncate(&task.description, 80);
 
             format!("{} - {}", task_id, safe_desc)
         })
@@ -369,11 +376,7 @@ pub async fn build_todo_components(
             };
 
             let max_desc_len = 80 - prefix.len() - time_str.len() - deadline_str.len() - 3;
-            let safe_desc = if task.description.len() > max_desc_len {
-                format!("{}...", &task.description[..max_desc_len - 3])
-            } else {
-                task.description.clone()
-            };
+            let safe_desc = truncate(&task.description, max_desc_len);
 
             let label = format!("{} {}{}{}", prefix, safe_desc, deadline_str, time_str);
 
@@ -452,11 +455,7 @@ pub async fn delete_tasks(ctx: Context<'_>) -> Result<(), Error> {
         };
 
         let max_desc_len = 80 - prefix.len();
-        let safe_desc = if task.description.len() > max_desc_len {
-            format!("{}...", &task.description[..max_desc_len - 3])
-        } else {
-            task.description.clone()
-        };
+        let safe_desc = truncate(&task.description, max_desc_len);
 
         let label = format!("{}{}", prefix, safe_desc);
 
@@ -483,4 +482,19 @@ pub async fn delete_tasks(ctx: Context<'_>) -> Result<(), Error> {
 
     ctx.send(reply).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate;
+
+    #[test]
+    fn truncate_counts_characters_not_bytes() {
+        assert_eq!(truncate("short", 80), "short");
+        assert_eq!(truncate("abcdefgh", 6), "abc...");
+        let accented = "é".repeat(10);
+        assert_eq!(truncate(&accented, 10), accented);
+        assert_eq!(truncate(&accented, 6), "ééé...");
+        assert_eq!(truncate("🍅🍅🍅🍅🍅", 4), "🍅...");
+    }
 }

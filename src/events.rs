@@ -1,4 +1,4 @@
-use crate::commands::tasks::build_todo_components;
+use crate::commands::tasks::{build_todo_components, truncate};
 use crate::state::{Data, Error, SessionData};
 use poise::serenity_prelude as serenity;
 use std::collections::HashMap;
@@ -246,7 +246,7 @@ pub async fn handle_event(
 
                 for task in pending_tasks {
                     let mut opt = serenity::CreateSelectMenuOption::new(
-                        &task.description,
+                        truncate(&task.description, 100),
                         task.task_id.unwrap().to_string(),
                     );
                     if task.is_last_selected {
@@ -515,7 +515,7 @@ pub async fn handle_event(
 
                 for task in pending_tasks {
                     let mut opt = serenity::CreateSelectMenuOption::new(
-                        &task.description,
+                        truncate(&task.description, 100),
                         task.task_id.unwrap().to_string(),
                     );
                     if task.task_id.unwrap().to_string() == *selected_value {
