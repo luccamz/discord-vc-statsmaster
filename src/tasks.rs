@@ -1,8 +1,10 @@
-use crate::state::Error;
+use crate::state::{Error, SessionData};
 use chrono::{Datelike, Timelike};
 use poise::serenity_prelude as serenity;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::time::Duration;
 
 #[derive(Debug, poise::ChoiceParameter)]
@@ -33,26 +35,50 @@ impl WeekdayChoice {
 async fn perform_guild_reset(
     http: &Arc<serenity::Http>,
     db: &SqlitePool,
+    sessions: &Mutex<HashMap<(u64, u64), SessionData>>,
     guild_id: i64,
     channel_id: i64,
     current_weeks: i64,
 ) -> Result<(), Error> {
     let new_weeks = current_weeks + 1;
 
+    // Hold the lock so open sessions count towards this week and no commit lands mid-reset.
+    let mut sessions = sessions.lock().await;
+    let now = chrono::Utc::now().timestamp();
+    for (&(user, guild), session) in sessions.iter_mut() {
+        if guild == guild_id as u64 {
+            crate::sessions::commit(db, user as i64, guild_id, session, now).await?;
+            session.start_time = now;
+        }
+    }
+
+    let mut tx = db.begin().await?;
     sqlx::query!(
         "UPDATE guild_settings SET weeks_tracked = ? WHERE guild_id = ?",
         new_weeks,
         guild_id
     )
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
 
     let records = sqlx::query!(
         "SELECT user_id, total_seconds, personal_record FROM voice_stats WHERE guild_id = ? ORDER BY total_seconds DESC LIMIT 5",
         guild_id
     )
-        .fetch_all(db)
+        .fetch_all(&mut *tx)
         .await?;
+
+    sqlx::query!(
+        "UPDATE voice_stats
+        SET total_seconds = 0,
+        personal_record = MAX(personal_record, total_seconds)
+        WHERE guild_id = ?",
+        guild_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    drop(sessions);
 
     let mut message = format!("**Weekly Voice Leaderboard (Week {})**\n", new_weeks);
 
@@ -83,20 +109,14 @@ async fn perform_guild_reset(
     let builder = serenity::CreateMessage::new().content(message);
     let _ = channel.send_message(http, builder).await;
 
-    sqlx::query!(
-        "UPDATE voice_stats
-        SET total_seconds = 0,
-        personal_record = MAX(personal_record, total_seconds)
-        WHERE guild_id = ?",
-        guild_id
-    )
-    .execute(db)
-    .await?;
-
     Ok(())
 }
 
-pub async fn weekly_reset_task(http: Arc<serenity::Http>, db: SqlitePool) {
+pub async fn weekly_reset_task(
+    http: Arc<serenity::Http>,
+    db: SqlitePool,
+    sessions: Arc<Mutex<HashMap<(u64, u64), SessionData>>>,
+) {
     let mut interval = tokio::time::interval(Duration::from_secs(60));
 
     loop {
@@ -125,7 +145,8 @@ pub async fn weekly_reset_task(http: Arc<serenity::Http>, db: SqlitePool) {
                 let weeks_tracked: i64 = row.weeks_tracked;
 
                 if let Err(e) =
-                    perform_guild_reset(&http, &db, guild_id, channel_id, weeks_tracked).await
+                    perform_guild_reset(&http, &db, &sessions, guild_id, channel_id, weeks_tracked)
+                        .await
                 {
                     eprintln!(
                         "Failed to execute scheduled reset for guild {}: {}",
