@@ -61,25 +61,20 @@ fn lock(pomodoros: &Pomodoros) -> MutexGuard<'_, HashMap<(u64, u64), Pomodoro>> 
 }
 
 /// Signals the task and cleans up what it left visible. The entry must already be removed.
-fn stop(http: &Arc<Http>, user: UserId, p: Pomodoro, dm: Option<String>) {
+fn stop(http: &Arc<Http>, p: Pomodoro) {
     p.cancel.notify_one();
-    let http = http.clone();
-    tokio::spawn(async move {
-        if let Some((channel, msg)) = p.status_msg {
+    if let Some((channel, msg)) = p.status_msg {
+        let http = http.clone();
+        tokio::spawn(async move {
             let _ = channel.delete_message(&*http, msg).await;
-        }
-        if let Some(dm) = dm {
-            let _ = user
-                .direct_message(&*http, serenity::CreateMessage::new().content(dm))
-                .await;
-        }
-    });
+        });
+    }
 }
 
 /// Starts a pomodoro for the user, replacing any running one.
 pub fn start(cfg: Config) {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let (key, http, user) = (cfg.key(), cfg.http.clone(), cfg.user);
+    let (key, http) = (cfg.key(), cfg.http.clone());
     let pomodoros = cfg.pomodoros.clone();
     let entry = Pomodoro {
         id,
@@ -91,7 +86,7 @@ pub fn start(cfg: Config) {
 
     let old = lock(&pomodoros).insert(key, entry);
     if let Some(old) = old {
-        stop(&http, user, old, None);
+        stop(&http, old);
     }
     tokio::spawn(run(cfg, id, cancel));
 }
@@ -119,8 +114,7 @@ pub fn on_voice_update(
         }
     };
     if let Some(p) = removed {
-        let dm = "⏹️ Pomodoro cancelled because you left the channel.";
-        stop(http, UserId::new(key.0), p, Some(dm.into()));
+        stop(http, p);
     }
 }
 
@@ -148,41 +142,28 @@ fn remove_own(cfg: &Config, id: u64) -> Option<Pomodoro> {
 async fn announce(cfg: &Config, id: u64, phase: Phase, round: u32, last: bool) -> bool {
     let ends = chrono::Utc::now().timestamp() + cfg.duration(phase).as_secs() as i64;
     let rounds = cfg.reps.map_or("∞".to_string(), |r| r.to_string());
-    let (title, color, desc, dm) = match phase {
-        Phase::Work => {
-            let (next, dm_next) = if last {
-                ("done", "Ends")
-            } else {
-                ("break", "Break")
-            };
-            (
-                format!("🍅 Focus · round {round}/{rounds}"),
-                0xE74C3C,
-                format!("<@{}> · {next} <t:{ends}:R>", cfg.user),
-                format!(
-                    "🍅 Round {round}/{rounds} started in <#{}>. {dm_next} <t:{ends}:R>.",
-                    cfg.work_channel
-                ),
-            )
-        }
-        Phase::Pause => (
-            "☕ Break".to_string(),
-            0x2ECC71,
-            format!("<@{}> · back to work <t:{ends}:R>", cfg.user),
-            format!(
-                "☕ Break time. Back to <#{}> <t:{ends}:R>.",
-                cfg.work_channel
-            ),
+    let (title, color, next) = match phase {
+        Phase::Work => (
+            format!("🍅 Focus · round {round}/{rounds}"),
+            0xE74C3C,
+            if last { "done" } else { "break" },
         ),
+        Phase::Pause => ("☕ Break".to_string(), 0x2ECC71, "back to work"),
     };
 
+    // The mention sits in the content because mentions inside embeds do not notify.
     let embed = serenity::CreateEmbed::new()
         .title(title)
-        .description(desc)
+        .description(format!("{next} <t:{ends}:R>"))
         .color(color);
     let sent = cfg
         .channel(phase)
-        .send_message(&*cfg.http, serenity::CreateMessage::new().embed(embed))
+        .send_message(
+            &*cfg.http,
+            serenity::CreateMessage::new()
+                .content(format!("<@{}>", cfg.user))
+                .embed(embed),
+        )
         .await
         .ok()
         .map(|m| (m.channel_id, m.id));
@@ -197,20 +178,14 @@ async fn announce(cfg: &Config, id: u64, phase: Phase, round: u32, last: bool) -
     if let Some((channel, msg)) = previous {
         let _ = channel.delete_message(&*cfg.http, msg).await;
     }
-    if alive {
-        let _ = cfg
-            .user
-            .direct_message(&*cfg.http, serenity::CreateMessage::new().content(dm))
-            .await;
-    }
     alive
 }
 
-fn finish(cfg: &Config, id: u64, dm: String) -> bool {
+fn finish(cfg: &Config, id: u64) -> bool {
     let Some(p) = remove_own(cfg, id) else {
         return false;
     };
-    stop(&cfg.http, cfg.user, p, Some(dm));
+    stop(&cfg.http, p);
     true
 }
 
@@ -240,11 +215,15 @@ async fn run(cfg: Config, id: u64, cancel: Arc<Notify>) {
             .await
             .is_err()
         {
-            finish(
-                &cfg,
-                id,
-                format!("⚠️ Pomodoro stopped: I could not move you to <#{to}>."),
-            );
+            if finish(&cfg, id) {
+                let warning = format!(
+                    "<@{}> ⚠️ Pomodoro stopped: I could not move you to <#{to}>.",
+                    cfg.user
+                );
+                let _ = from
+                    .send_message(&*cfg.http, serenity::CreateMessage::new().content(warning))
+                    .await;
+            }
             return;
         }
         if !update_own(&cfg, id, |p| p.allowed = [Some(to), None]) {
@@ -253,7 +232,7 @@ async fn run(cfg: Config, id: u64, cancel: Arc<Notify>) {
     }
 
     // Remove first so the disconnect's voice update finds no entry to cancel.
-    if finish(&cfg, id, "✅ Pomodoro complete. Nice work!".into()) {
+    if finish(&cfg, id) {
         let _ = cfg.guild.disconnect_member(&*cfg.http, cfg.user).await;
     }
 }
