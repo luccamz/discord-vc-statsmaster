@@ -131,7 +131,7 @@ pub async fn sync_guild(
     Ok(restored)
 }
 
-/// Commits all open sessions on SIGTERM or Ctrl+C, deletes the bot's live messages, then
+/// Commits all open sessions on SIGTERM or Ctrl+C, cleans up the bot's live messages, then
 /// stops the shards.
 pub async fn flush_on_shutdown(
     sessions: Arc<Mutex<HashMap<(u64, u64), SessionData>>>,
@@ -159,15 +159,23 @@ pub async fn flush_on_shutdown(
         }
     }
 
-    let mut leftovers: Vec<_> = prompts
+    let prompts: Vec<_> = prompts
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .drain()
         .collect();
-    leftovers.extend(crate::pomodoro::drain_status_messages(&pomodoros));
+    let timers = crate::pomodoro::drain_status_messages(&pomodoros);
     let cleanup = async {
-        for (channel, msg) in leftovers {
+        for (channel, msg) in prompts {
             let _ = channel.delete_message(&*http, msg).await;
+        }
+        // Pomodoros do not survive a restart, so say so where the timer was.
+        let stopped = serenity::EditMessage::new()
+            .content("⏹ Pomodoro stopped: bot restarting.")
+            .embeds(Vec::new())
+            .components(Vec::new());
+        for (channel, msg) in timers {
+            let _ = channel.edit_message(&*http, msg, stopped.clone()).await;
         }
     };
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), cleanup).await;
