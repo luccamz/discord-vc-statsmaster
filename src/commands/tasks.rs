@@ -310,6 +310,63 @@ pub async fn edit_deadline(
     Ok(())
 }
 
+pub struct PromptTask {
+    pub id: i64,
+    pub description: String,
+    pub seconds: i64,
+    pub last_selected: bool,
+}
+
+pub async fn pending_tasks(db: &sqlx::SqlitePool, user_id: i64) -> Result<Vec<PromptTask>, Error> {
+    Ok(sqlx::query!(
+        "SELECT task_id, description, is_last_selected, time_spent_seconds 
+         FROM user_tasks 
+         WHERE user_id = ? AND completed_at IS NULL AND terminated_at IS NULL",
+        user_id
+    )
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .filter_map(|t| {
+        Some(PromptTask {
+            id: t.task_id?,
+            description: t.description,
+            seconds: t.time_spent_seconds,
+            last_selected: t.is_last_selected,
+        })
+    })
+    .collect())
+}
+
+/// The task dropdown shared by the "Currently working on" prompt and the pomodoro timer.
+pub fn task_menu(
+    custom_id: String,
+    tasks: &[PromptTask],
+    selected: Option<i64>,
+) -> serenity::CreateSelectMenu {
+    let mut options = vec![
+        serenity::CreateSelectMenuOption::new("Nothing in particular", "none")
+            .default_selection(selected.is_none()),
+    ];
+    options.extend(tasks.iter().take(24).map(|t| {
+        serenity::CreateSelectMenuOption::new(truncate(&t.description, 100), t.id.to_string())
+            .description(format!("{} spent", format_duration(t.seconds)))
+            .default_selection(Some(t.id) == selected)
+    }));
+    serenity::CreateSelectMenu::new(
+        custom_id,
+        serenity::CreateSelectMenuKind::String { options },
+    )
+}
+
+pub fn prompt_text(user_id: i64, tasks: &[PromptTask], selected: Option<i64>) -> String {
+    let current = tasks
+        .iter()
+        .find(|t| Some(t.id) == selected)
+        .map_or("Nothing in particular", |t| t.description.as_str());
+    format!("<@{user_id}> Currently working on.. {current}. Change status?")
+}
+
 /// Builds the todo embed and its toggle buttons; the buttons are empty when there are no tasks.
 pub async fn build_todo(
     db: &SqlitePool,

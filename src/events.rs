@@ -1,4 +1,4 @@
-use crate::commands::tasks::{build_todo, format_duration, truncate};
+use crate::commands::tasks::{build_todo, pending_tasks, prompt_text, task_menu};
 use crate::pomodoro::{self, Control};
 use crate::state::{Data, Error, SessionData};
 use poise::serenity_prelude as serenity;
@@ -20,65 +20,6 @@ async fn acknowledge_setup_step(
         )
         .await?;
     Ok(())
-}
-
-struct PromptTask {
-    id: i64,
-    description: String,
-    seconds: i64,
-    last_selected: bool,
-}
-
-async fn pending_tasks(db: &sqlx::SqlitePool, user_id: i64) -> Result<Vec<PromptTask>, Error> {
-    Ok(sqlx::query!(
-        "SELECT task_id, description, is_last_selected, time_spent_seconds 
-         FROM user_tasks 
-         WHERE user_id = ? AND completed_at IS NULL AND terminated_at IS NULL",
-        user_id
-    )
-    .fetch_all(db)
-    .await?
-    .into_iter()
-    .filter_map(|t| {
-        Some(PromptTask {
-            id: t.task_id?,
-            description: t.description,
-            seconds: t.time_spent_seconds,
-            last_selected: t.is_last_selected,
-        })
-    })
-    .collect())
-}
-
-/// Builds the "Currently working on" text and its task dropdown.
-fn task_prompt(
-    user_id: i64,
-    tasks: &[PromptTask],
-    selected: Option<i64>,
-) -> (String, serenity::CreateSelectMenu) {
-    let current = tasks
-        .iter()
-        .find(|t| Some(t.id) == selected)
-        .map_or("Nothing in particular", |t| t.description.as_str());
-
-    let mut options = vec![
-        serenity::CreateSelectMenuOption::new("Nothing in particular", "none")
-            .default_selection(selected.is_none()),
-    ];
-    options.extend(tasks.iter().take(24).map(|t| {
-        serenity::CreateSelectMenuOption::new(truncate(&t.description, 100), t.id.to_string())
-            .description(format!("{} spent", format_duration(t.seconds)))
-            .default_selection(Some(t.id) == selected)
-    }));
-
-    let menu = serenity::CreateSelectMenu::new(
-        format!("task_select_{}", user_id),
-        serenity::CreateSelectMenuKind::String { options },
-    );
-    (
-        format!("<@{user_id}> Currently working on.. {current}. Change status?"),
-        menu,
-    )
 }
 
 pub async fn handle_event(
@@ -281,8 +222,17 @@ pub async fn handle_event(
             }
 
             // Prompt only when there is a task to choose from.
-            if is_in_tracked_channel && !pending_tasks.is_empty() {
-                let (prompt_content, menu) = task_prompt(user_id, &pending_tasks, initial_task_id);
+            // A running pomodoro carries the task dropdown on its timer message instead.
+            if is_in_tracked_channel
+                && !pending_tasks.is_empty()
+                && !pomodoro::is_running(&data.pomodoros, key)
+            {
+                let prompt_content = prompt_text(user_id, &pending_tasks, initial_task_id);
+                let menu = task_menu(
+                    format!("task_select_{user_id}"),
+                    &pending_tasks,
+                    initial_task_id,
+                );
 
                 let channel = serenity::ChannelId::new(current_channel_id as u64);
                 if let Ok(message) = channel
@@ -458,7 +408,15 @@ pub async fn handle_event(
                 _ => {}
             }
 
-            if let Some(rest) = component.data.custom_id.strip_prefix("pomo_") {
+            let custom_id = component.data.custom_id.as_str();
+            let task_menu_owner = custom_id
+                .strip_prefix("task_select_")
+                .or_else(|| custom_id.strip_prefix("pomo_task_"));
+
+            if let Some(rest) = custom_id
+                .strip_prefix("pomo_")
+                .filter(|_| task_menu_owner.is_none())
+            {
                 let parts: Vec<&str> = rest.split('_').collect();
                 let [action, owner, id, round] = parts[..] else {
                     return Ok(());
@@ -497,9 +455,8 @@ pub async fn handle_event(
                     reply("This pomodoro has ended.")
                 };
                 component.create_response(ctx, response).await?;
-            } else if component.data.custom_id.starts_with("task_select_") {
-                let extracted_id = component.data.custom_id.replace("task_select_", "");
-                if extracted_id != user_id.to_string() {
+            } else if let Some(owner) = task_menu_owner {
+                if owner != user_id.to_string() {
                     component
                         .create_response(
                             ctx,
@@ -547,18 +504,32 @@ pub async fn handle_event(
                 .await?;
 
                 let tasks = pending_tasks(&data.db, user_id).await?;
-                let (content, updated_menu) = task_prompt(user_id, &tasks, selected_task);
+                let menu = task_menu(custom_id.to_string(), &tasks, selected_task);
+                let mut rows = vec![serenity::CreateActionRow::SelectMenu(menu)];
+                let mut update = serenity::CreateInteractionResponseMessage::new();
+                if custom_id.starts_with("pomo_task_") {
+                    // Keep the timer's own buttons; its text and embed stay as they are.
+                    let buttons: Vec<serenity::CreateButton> = component
+                        .message
+                        .components
+                        .iter()
+                        .flat_map(|row| &row.components)
+                        .filter_map(|c| match c {
+                            serenity::ActionRowComponent::Button(b) => Some(b.clone().into()),
+                            _ => None,
+                        })
+                        .collect();
+                    if !buttons.is_empty() {
+                        rows.push(serenity::CreateActionRow::Buttons(buttons));
+                    }
+                } else {
+                    update = update.content(prompt_text(user_id, &tasks, selected_task));
+                }
 
                 component
                     .create_response(
                         ctx,
-                        serenity::CreateInteractionResponse::UpdateMessage(
-                            serenity::CreateInteractionResponseMessage::new()
-                                .content(content)
-                                .components(vec![serenity::CreateActionRow::SelectMenu(
-                                    updated_menu,
-                                )]), // Send the new menu
-                        ),
+                        serenity::CreateInteractionResponse::UpdateMessage(update.components(rows)),
                     )
                     .await?;
             } else if component.data.custom_id.starts_with("task_toggle_") {

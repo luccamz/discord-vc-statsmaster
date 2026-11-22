@@ -1,3 +1,4 @@
+use crate::commands::tasks::{pending_tasks, task_menu};
 use crate::state::{Pomodoro, Pomodoros};
 use poise::serenity_prelude::{self as serenity, ChannelId, GuildId, Http, UserId};
 use std::collections::HashMap;
@@ -100,6 +101,10 @@ pub fn control(pomodoros: &Pomodoros, key: (u64, u64), id: u64, msg: Control) ->
         .is_some_and(|p| p.id == id && p.control.send(msg).is_ok())
 }
 
+pub fn is_running(pomodoros: &Pomodoros, key: (u64, u64)) -> bool {
+    lock(pomodoros).contains_key(&key)
+}
+
 pub fn users_in_guild(pomodoros: &Pomodoros, guild: u64) -> Vec<(u64, u64)> {
     lock(pomodoros)
         .keys()
@@ -155,7 +160,7 @@ struct Status {
     title: String,
     color: u32,
     body: String,
-    button: Option<serenity::CreateButton>,
+    components: Vec<serenity::CreateActionRow>,
 }
 
 /// Replaces the status message. Returns false if cancelled.
@@ -165,12 +170,10 @@ async fn announce(cfg: &Config, id: u64, status: Status) -> bool {
         .title(status.title)
         .description(status.body)
         .color(status.color);
-    let mut message = serenity::CreateMessage::new()
+    let message = serenity::CreateMessage::new()
         .content(format!("<@{}> {}", cfg.user, status.notice))
-        .embed(embed);
-    if let Some(button) = status.button {
-        message = message.button(button);
-    }
+        .embed(embed)
+        .components(status.components);
     let sent = status
         .channel
         .send_message(&*cfg.http, message)
@@ -286,6 +289,23 @@ fn round_dots(reps: Option<u32>, done: u32, in_progress: bool) -> String {
     }
 }
 
+/// The task dropdown, when there are pending tasks, above the pause button.
+async fn work_components(
+    cfg: &Config,
+    pause: serenity::CreateButton,
+) -> Vec<serenity::CreateActionRow> {
+    let user_id = cfg.user.get() as i64;
+    let tasks = pending_tasks(&cfg.db, user_id).await.unwrap_or_default();
+    let mut rows = Vec::new();
+    if !tasks.is_empty() {
+        let selected = tasks.iter().find(|t| t.last_selected).map(|t| t.id);
+        let menu = task_menu(format!("pomo_task_{user_id}"), &tasks, selected);
+        rows.push(serenity::CreateActionRow::SelectMenu(menu));
+    }
+    rows.push(serenity::CreateActionRow::Buttons(vec![pause]));
+    rows
+}
+
 fn ends_at(duration: Duration) -> i64 {
     chrono::Utc::now().timestamp() + duration.as_secs() as i64
 }
@@ -316,7 +336,7 @@ async fn work(
                 ends_at(remaining),
                 round_dots(cfg.reps, round - 1, true)
             ),
-            button: Some(pause),
+            components: work_components(cfg, pause).await,
         };
         if !announce(cfg, id, status).await {
             return false;
@@ -352,7 +372,7 @@ async fn work(
                 secs % 60,
                 round_dots(cfg.reps, round - 1, true)
             ),
-            button: Some(resume),
+            components: vec![serenity::CreateActionRow::Buttons(vec![resume])],
         };
         if !announce(cfg, id, status).await
             || !wait_resume(rx, round).await
@@ -375,7 +395,7 @@ async fn take_break(cfg: &Config, id: u64, rx: &mut UnboundedReceiver<Control>, 
             ends_at(cfg.pause),
             round_dots(cfg.reps, done, false)
         ),
-        button: None,
+        components: Vec::new(),
     };
     announce(cfg, id, status).await && matches!(wait(rx, cfg.pause, None).await, Waited::Elapsed)
 }
